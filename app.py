@@ -13,11 +13,18 @@ SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/au
 def get_connection():
     """Conecta con Google Sheets (Compatible con PC y Nube)"""
     try:
-        # Intenta leer desde los secretos de la nube (Streamlit Cloud)
+        # Intenta leer desde los secretos de la nube
         if "gcp_service_account" in st.secrets:
             creds_dict = dict(st.secrets["gcp_service_account"])
+            
+            # --- CORRECCIÓN MÁGICA ---
+            # Esto arregla el error de formato reemplazando los \n literales
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+            # -------------------------
+            
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
-        # Si no encuentra secretos, busca el archivo local (Tu PC)
+        
+        # Si no, busca el archivo local
         else:
             creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", SCOPE)
         
@@ -319,4 +326,5 @@ if check_password():
                     st.rerun()
 
     else:
+
         st.info("👋 La base de datos está vacía. Carga el primer registro a la izquierda.")
