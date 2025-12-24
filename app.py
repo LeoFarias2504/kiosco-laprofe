@@ -7,34 +7,30 @@ from datetime import datetime, timedelta, date
 # --- 1. CONFIGURACIÓN ---
 st.set_page_config(page_title="GESTION LIBRERIA LA PROFE", layout="wide", page_icon="📚")
 
-# --- 2. CONEXIÓN A GOOGLE SHEETS ---
+# --- 2. CONEXIÓN A GOOGLE SHEETS (HIBRIDA Y ROBUSTA) ---
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 
 def get_connection():
     """Conecta con Google Sheets (Compatible con PC y Nube)"""
     try:
-        # Intenta leer desde los secretos de la nube
         if "gcp_service_account" in st.secrets:
             creds_dict = dict(st.secrets["gcp_service_account"])
             
-            # --- CORRECCIÓN MÁGICA ---
-            # Esto arregla el error de formato reemplazando los \n literales
-            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
-            # -------------------------
+            # Convierte los "\\n" literales en saltos de línea reales (Fix clave privada)
+            if "private_key" in creds_dict:
+                creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
             
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
-        
-        # Si no, busca el archivo local
         else:
             creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", SCOPE)
-        
+            
         client = gspread.authorize(creds)
         sheet = client.open("Base_Datos_Kiosco").sheet1 
         return sheet
     except Exception as e:
         st.error(f"Error de conexión: {e}")
         st.stop()
-        
+
 # --- 3. FUNCIONES DE DATOS (NUBE) ---
 def load_data():
     sheet = get_connection()
@@ -51,12 +47,14 @@ def load_data():
     
     df = pd.DataFrame(data)
     
+    # Limpieza de fechas
     if 'Fecha' in df.columns:
         df['Fecha'] = pd.to_datetime(df['Fecha'])
         
     cols_numericas = ['Total_Ventas', 'Ganancia_Neta', 'Total_Sueldos', 'Cant_Copias', 
                       'Costo_Copia_Unit', 'Gastos_Fijos', 'Total_Costo_Copias', 
-                      'Valor_Hora', 'Margen_Porc', 'Costo_Mercaderia'] # Agregamos Costo_Mercaderia aquí
+                      'Valor_Hora', 'Margen_Porc', 'Costo_Mercaderia']
+    
     for col in cols_numericas:
         if col in df.columns:
             df[col] = df[col].astype(str).str.replace(r'[$,]', '', regex=True)
@@ -179,7 +177,6 @@ if check_password():
 
             if submitted:
                 total_ventas = venta_efvo + venta_mp
-                # Calculamos Costo de Mercadería (Reposición)
                 costo_mercaderia = total_ventas * (1 - (margen_input / 100))
                 ganancia_bruta = total_ventas - costo_mercaderia
                 total_sueldos = horas_staff * valor_hora
@@ -216,7 +213,8 @@ if check_password():
         st.markdown("### 🔍 Visualización")
         filtro_col, periodo_col = st.columns([1, 3])
         with filtro_col:
-            opcion_filtro = st.radio("Filtrar por:", ["Hoy", "Última Semana", "Mes (Ciclo Copias)", "Día Específico"])
+            # === AGREGADA OPCIÓN "RANGO PERSONALIZADO" ===
+            opcion_filtro = st.radio("Filtrar por:", ["Hoy", "Última Semana", "Rango Personalizado", "Mes (Ciclo Copias)"])
 
         df_filtrado = df.copy()
         df_filtrado['Fecha_Solo'] = df_filtrado['Fecha'].dt.date 
@@ -229,10 +227,25 @@ if check_password():
             if opcion_filtro == "Hoy":
                 df_filtrado = df_filtrado[df_filtrado['Fecha_Solo'] == hoy]
                 titulo_periodo = f"HOY ({hoy.strftime('%d/%m')})"
+                
             elif opcion_filtro == "Última Semana":
                 inicio = hoy - timedelta(days=7)
                 df_filtrado = df_filtrado[(df_filtrado['Fecha_Solo'] >= inicio) & (df_filtrado['Fecha_Solo'] <= hoy)]
                 titulo_periodo = "ÚLTIMOS 7 DÍAS"
+                
+            # === LÓGICA DE RANGO PERSONALIZADO ===
+            elif opcion_filtro == "Rango Personalizado":
+                c_inicio, c_fin = st.columns(2)
+                f_inicio = c_inicio.date_input("Desde:", hoy - timedelta(days=30))
+                f_fin = c_fin.date_input("Hasta:", hoy)
+                
+                if f_inicio <= f_fin:
+                    df_filtrado = df_filtrado[(df_filtrado['Fecha_Solo'] >= f_inicio) & (df_filtrado['Fecha_Solo'] <= f_fin)]
+                    titulo_periodo = f"DEL {f_inicio.strftime('%d/%m')} AL {f_fin.strftime('%d/%m')}"
+                else:
+                    st.error("La fecha de inicio debe ser anterior a la fecha de fin.")
+                    df_filtrado = pd.DataFrame() # Vacío si hay error
+                
             elif opcion_filtro == "Mes (Ciclo Copias)":
                 df['Periodo_Fiscal'] = df['Fecha'].apply(get_periodo_copia)
                 meses = sorted(df['Periodo_Fiscal'].unique(), reverse=True)
@@ -240,10 +253,6 @@ if check_password():
                 df_filtrado = df[df['Periodo_Fiscal'] == mes_sel].copy()
                 titulo_periodo = f"PERIODO {mes_sel}"
                 es_vista_mes = True
-            elif opcion_filtro == "Día Específico":
-                dia_sel = st.date_input("Elige fecha:", hoy)
-                df_filtrado = df_filtrado[df_filtrado['Fecha_Solo'] == dia_sel]
-                titulo_periodo = f"DÍA {dia_sel.strftime('%d/%m/%Y')}"
 
         st.divider()
 
@@ -287,12 +296,11 @@ if check_password():
             st.divider()
             st.markdown("### 📋 Gestión de Registros")
             
-            # === TABLA DE BORRADO (MODIFICADA CON COSTO REP.) ===
-            # Ahora tenemos 8 columnas
+            # === TABLA ===
             h1, h2, h3, h4, h5, h6, h7, h8 = st.columns([1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 0.8])
             h1.markdown("**Fecha**")
             h2.markdown("**Ventas**")
-            h3.markdown("**Costo Rep.**") # <--- Nueva Columna
+            h3.markdown("**Costo Rep.**")
             h4.markdown("**Sueldos**")
             h5.markdown("**Gastos**")
             h6.markdown("**Copias**")
@@ -306,7 +314,6 @@ if check_password():
                 c1.write(row['Fecha'].strftime('%d/%m/%Y'))
                 c2.write(f"${row['Total_Ventas']:,.0f}")
                 
-                # Mostramos Costo Mercadería
                 costo_rep = row.get('Costo_Mercaderia', 0)
                 c3.write(f"${costo_rep:,.0f}")
                 
@@ -326,5 +333,4 @@ if check_password():
                     st.rerun()
 
     else:
-
         st.info("👋 La base de datos está vacía. Carga el primer registro a la izquierda.")
