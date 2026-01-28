@@ -16,7 +16,7 @@ def get_connection():
         if "gcp_service_account" in st.secrets:
             creds_dict = dict(st.secrets["gcp_service_account"])
             
-            # Convierte los "\\n" literales en saltos de línea reales (Fix clave privada)
+            # Convierte los "\\n" literales en saltos de línea reales
             if "private_key" in creds_dict:
                 creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
             
@@ -213,8 +213,7 @@ if check_password():
         st.markdown("### 🔍 Visualización")
         filtro_col, periodo_col = st.columns([1, 3])
         with filtro_col:
-            # === AGREGADA OPCIÓN "RANGO PERSONALIZADO" ===
-            opcion_filtro = st.radio("Filtrar por:", ["Hoy", "Última Semana", "Rango Personalizado", "Mes (Ciclo Copias)"])
+            opcion_filtro = st.radio("Filtrar por:", ["Hoy", "Última Semana", "Rango Personalizado", "Mes (Ciclo Copias)", "Día Específico"])
 
         df_filtrado = df.copy()
         df_filtrado['Fecha_Solo'] = df_filtrado['Fecha'].dt.date 
@@ -233,7 +232,6 @@ if check_password():
                 df_filtrado = df_filtrado[(df_filtrado['Fecha_Solo'] >= inicio) & (df_filtrado['Fecha_Solo'] <= hoy)]
                 titulo_periodo = "ÚLTIMOS 7 DÍAS"
                 
-            # === LÓGICA DE RANGO PERSONALIZADO ===
             elif opcion_filtro == "Rango Personalizado":
                 c_inicio, c_fin = st.columns(2)
                 f_inicio = c_inicio.date_input("Desde:", hoy - timedelta(days=30))
@@ -244,7 +242,7 @@ if check_password():
                     titulo_periodo = f"DEL {f_inicio.strftime('%d/%m')} AL {f_fin.strftime('%d/%m')}"
                 else:
                     st.error("La fecha de inicio debe ser anterior a la fecha de fin.")
-                    df_filtrado = pd.DataFrame() # Vacío si hay error
+                    df_filtrado = pd.DataFrame()
                 
             elif opcion_filtro == "Mes (Ciclo Copias)":
                 df['Periodo_Fiscal'] = df['Fecha'].apply(get_periodo_copia)
@@ -253,24 +251,37 @@ if check_password():
                 df_filtrado = df[df['Periodo_Fiscal'] == mes_sel].copy()
                 titulo_periodo = f"PERIODO {mes_sel}"
                 es_vista_mes = True
+            elif opcion_filtro == "Día Específico":
+                dia_sel = st.date_input("Elige fecha:", hoy)
+                df_filtrado = df_filtrado[df_filtrado['Fecha_Solo'] == dia_sel]
+                titulo_periodo = f"DÍA {dia_sel.strftime('%d/%m/%Y')}"
 
         st.divider()
 
         if df_filtrado.empty:
             st.info(f"No hay datos para: {titulo_periodo}")
         else:
-            # === CARTEL PNL ===
+            # === CÁLCULOS ===
             pnl_total = df_filtrado['Ganancia_Neta'].sum()
+            ventas_total = df_filtrado['Total_Ventas'].sum()
+            
+            # Cálculo del % de Utilidad
+            porc_utilidad = 0
+            if ventas_total > 0:
+                porc_utilidad = (pnl_total / ventas_total) * 100
+
+            # === CARTEL PNL CON % DE UTILIDAD ===
             st.markdown(f"""
             <div style="background-color: #d1e7dd; border: 1px solid #198754; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px; max-width: 600px; margin: 0 auto;">
                 <h3 style="color: #0f5132; margin:0; font-size: 18px;">GANANCIA NETA ({titulo_periodo})</h3>
                 <h1 style="color: #198754; font-size: 45px; margin:0; font-weight: bold;">${pnl_total:,.0f}</h1>
+                <p style="color: #0f5132; margin:0; font-size: 16px; margin-top: 5px;">Utilidad Real: <strong>{porc_utilidad:.1f}%</strong></p>
             </div><br>
             """, unsafe_allow_html=True)
 
             # === MÉTRICAS ===
             col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Ventas", f"${df_filtrado['Total_Ventas'].sum():,.0f}")
+            col1.metric("Ventas", f"${ventas_total:,.0f}")
             col2.metric("Sueldos", f"${df_filtrado['Total_Sueldos'].sum():,.0f}")
             col3.metric("Gastos Fijos", f"${df_filtrado['Gastos_Fijos'].sum():,.0f}")
             col4.metric("Copias (Cant)", f"{df_filtrado['Cant_Copias'].sum():,.0f}")
