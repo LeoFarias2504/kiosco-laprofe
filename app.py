@@ -7,15 +7,19 @@ from datetime import datetime, timedelta, date
 # --- 1. CONFIGURACIÓN ---
 st.set_page_config(page_title="GESTION LIBRERIA LA PROFE", layout="wide", page_icon="📚")
 
-# --- 2. CONEXIÓN A GOOGLE SHEETS ---
+# --- 2. CONEXIÓN A GOOGLE SHEETS (HIBRIDA Y ROBUSTA) ---
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 
 def get_connection():
+    """Conecta con Google Sheets (Compatible con PC y Nube)"""
     try:
         if "gcp_service_account" in st.secrets:
             creds_dict = dict(st.secrets["gcp_service_account"])
+            
+            # Convierte los "\\n" literales en saltos de línea reales
             if "private_key" in creds_dict:
                 creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+            
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
         else:
             creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", SCOPE)
@@ -27,7 +31,7 @@ def get_connection():
         st.error(f"Error de conexión: {e}")
         st.stop()
 
-# --- 3. FUNCIONES ---
+# --- 3. FUNCIONES DE DATOS (NUBE) ---
 def load_data():
     sheet = get_connection()
     data = sheet.get_all_records()
@@ -43,6 +47,7 @@ def load_data():
     
     df = pd.DataFrame(data)
     
+    # Limpieza de fechas
     if 'Fecha' in df.columns:
         df['Fecha'] = pd.to_datetime(df['Fecha'])
         
@@ -62,22 +67,19 @@ def save_new_record(record_dict):
     try:
         headers = sheet.row_values(1)
         if not headers:
-            headers = list(record_dict.keys())
+            headers = [
+                "Fecha", "Venta_Efectivo", "Venta_MP", "Total_Ventas", 
+                "Margen_Porc", "Costo_Mercaderia", "Ganancia_Bruta", 
+                "Gastos_Fijos", "Horas_Trabajadas", "Valor_Hora", "Total_Sueldos",
+                "Cant_Copias", "Costo_Copia_Unit", "Total_Costo_Copias",
+                "Ganancia_Neta", "Notas"
+            ]
             sheet.append_row(headers)
     except:
-        pass
+        headers = list(record_dict.keys())
 
     fila_a_subir = []
-    # Ordenamos basado en una lista fija para evitar errores si cambia el dict
-    orden_cols = [
-        "Fecha", "Venta_Efectivo", "Venta_MP", "Total_Ventas", 
-        "Margen_Porc", "Costo_Mercaderia", "Ganancia_Bruta", 
-        "Gastos_Fijos", "Horas_Trabajadas", "Valor_Hora", "Total_Sueldos",
-        "Cant_Copias", "Costo_Copia_Unit", "Total_Costo_Copias",
-        "Ganancia_Neta", "Notas"
-    ]
-    
-    for col in orden_cols:
+    for col in headers:
         val = record_dict.get(col, "")
         if isinstance(val, (datetime, date, pd.Timestamp)):
             val = val.strftime('%Y-%m-%d')
@@ -101,217 +103,245 @@ def get_periodo_copia(fecha):
     else:
         return fecha.strftime("%Y-%m (Cierre 21)")
 
-# --- 4. LOGIN ---
+# --- 4. SISTEMA DE LOGIN ---
 def check_password():
     clave_real = "libreria2024" 
+    
     if "password_correct" not in st.session_state:
         st.session_state.password_correct = False
+
     if not st.session_state.password_correct:
         st.markdown("<h1 style='text-align: center;'>🔒 Acceso La Profe</h1>", unsafe_allow_html=True)
-        c1, c2, c3 = st.columns([1,2,1])
-        with c2:
+        col1, col2, col3 = st.columns([1,2,1])
+        with col2:
             pass_input = st.text_input("Contraseña", type="password")
             if st.button("Ingresar", type="primary"):
                 if pass_input == clave_real:
                     st.session_state.password_correct = True
                     st.rerun()
                 else:
-                    st.error("❌ Incorrecta")
+                    st.error("❌ Contraseña incorrecta")
         return False
     return True
 
-# --- APP ---
+# --- EJECUCIÓN PRINCIPAL ---
 if check_password():
-    with st.spinner('Cargando datos...'):
+    
+    with st.spinner('Conectando con Google Drive...'):
         df = load_data()
 
-    # Defaults
-    default_margen, default_valor_hora, default_costo_copia, default_gastos = 50, 2000.0, 10.0, 0.0
-    if not df.empty:
-        last = df.iloc[0]
-        default_margen = int(last.get('Margen_Porc', 50))
-        default_valor_hora = float(last.get('Valor_Hora', 2000.0))
-        default_costo_copia = float(last.get('Costo_Copia_Unit', 10.0))
-        default_gastos = float(last.get('Gastos_Fijos', 0.0))
+    # --- MEMORIA (Defaults) ---
+    default_margen = 50
+    default_valor_hora = 2000.0
+    default_costo_copia = 10.0
+    default_gastos_fijos = 0.0
 
-    # --- SIDEBAR (Entrada) ---
+    if not df.empty:
+        last_row = df.iloc[0]
+        default_margen = int(last_row.get('Margen_Porc', 50))
+        default_valor_hora = float(last_row.get('Valor_Hora', 2000.0))
+        default_costo_copia = float(last_row.get('Costo_Copia_Unit', 10.0))
+        default_gastos_fijos = float(last_row.get('Gastos_Fijos', 0.0))
+
+    # --- SIDEBAR ---
     with st.sidebar:
         st.title("📚 LIBRERIA LA PROFE")
+        st.success("🟢 Conectado a Nube")
         st.markdown("---")
-        with st.form("daily", clear_on_submit=True):
+        
+        with st.form("daily_form", clear_on_submit=True):
             st.subheader("📝 Nuevo Registro")
             fecha = st.date_input("Fecha", datetime.today())
+            
             st.markdown("##### 1. Ventas")
             c1, c2 = st.columns(2)
-            v_efec = c1.number_input("Efectivo ($)", min_value=0.0, format="%.2f")
-            v_mp = c2.number_input("MP ($)", min_value=0.0, format="%.2f")
+            venta_efvo = c1.number_input("Efectivo ($)", min_value=0.0, format="%.2f")
+            venta_mp = c2.number_input("Mercado Pago ($)", min_value=0.0, format="%.2f")
+            
             st.markdown("##### 2. Copias")
             c3, c4 = st.columns(2)
-            cant_cop = c3.number_input("Cant. Copias", min_value=0, step=1)
-            cost_cop = c4.number_input("Costo Unit.", value=default_costo_copia, format="%.2f")
+            cant_copias = c3.number_input("Cantidad", min_value=0, step=1)
+            costo_copia = c4.number_input("Costo Unit. ($)", min_value=0.0, value=default_costo_copia, format="%.2f")
+            
             st.markdown("##### 3. Gastos")
             c5, c6 = st.columns(2)
-            h_staff = c5.number_input("Horas Staff", min_value=0.0, step=0.5)
-            v_hora = c6.number_input("Valor Hora", value=default_valor_hora, format="%.2f")
-            g_fijos = st.number_input("Gastos Fijos", value=default_gastos, format="%.2f")
+            horas_staff = c5.number_input("Horas Staff", min_value=0.0, step=0.5)
+            valor_hora = c6.number_input("Valor Hora ($)", min_value=0.0, value=default_valor_hora, format="%.2f")
+            gastos_fijos = st.number_input("Otros Gastos Fijos", min_value=0.0, value=default_gastos_fijos, format="%.2f")
+            
             st.markdown("##### 4. Config")
-            margen = st.slider("Margen (%)", 10, 90, default_margen)
+            margen_input = st.slider("Margen (%)", 10, 90, default_margen)
             notas = st.text_input("Notas")
             
-            if st.form_submit_button("💾 Guardar"):
-                tot_ventas = v_efec + v_mp
-                cost_merc = tot_ventas * (1 - (margen / 100))
-                g_bruta = tot_ventas - cost_merc
-                tot_sueldos = h_staff * v_hora
-                tot_cost_cop = cant_cop * cost_cop
-                g_neta = g_bruta - g_fijos - tot_sueldos - tot_cost_cop
-                
-                new_rec = {
-                    "Fecha": fecha, "Venta_Efectivo": v_efec, "Venta_MP": v_mp,
-                    "Total_Ventas": tot_ventas, "Margen_Porc": margen,
-                    "Costo_Mercaderia": cost_merc, "Ganancia_Bruta": g_bruta,
-                    "Gastos_Fijos": g_fijos, "Horas_Trabajadas": h_staff,
-                    "Valor_Hora": v_hora, "Total_Sueldos": tot_sueldos,
-                    "Cant_Copias": cant_cop, "Costo_Copia_Unit": cost_cop,
-                    "Total_Costo_Copias": tot_cost_cop, "Ganancia_Neta": g_neta, "Notas": notas
-                }
-                save_new_record(new_rec)
-                st.success("Guardado!")
-                st.rerun()
+            submitted = st.form_submit_button("☁️ Guardar en Drive")
 
-    # --- DASHBOARD ---
+            if submitted:
+                total_ventas = venta_efvo + venta_mp
+                costo_mercaderia = total_ventas * (1 - (margen_input / 100))
+                ganancia_bruta = total_ventas - costo_mercaderia
+                total_sueldos = horas_staff * valor_hora
+                total_costo_copias = cant_copias * costo_copia
+                ganancia_neta = ganancia_bruta - gastos_fijos - total_sueldos - total_costo_copias
+                
+                new_record = {
+                    "Fecha": fecha,
+                    "Venta_Efectivo": venta_efvo, "Venta_MP": venta_mp,
+                    "Total_Ventas": total_ventas, "Margen_Porc": margen_input,
+                    "Costo_Mercaderia": costo_mercaderia, "Ganancia_Bruta": ganancia_bruta,
+                    "Gastos_Fijos": gastos_fijos, "Horas_Trabajadas": horas_staff,
+                    "Valor_Hora": valor_hora, "Total_Sueldos": total_sueldos,
+                    "Cant_Copias": cant_copias, "Costo_Copia_Unit": costo_copia,
+                    "Total_Costo_Copias": total_costo_copias,
+                    "Ganancia_Neta": ganancia_neta, "Notas": notas
+                }
+                
+                with st.spinner("Subiendo datos a Google..."):
+                    save_new_record(new_record)
+                
+                st.success("¡Guardado exitosamente!")
+                st.rerun()
+        
+        if st.button("🔒 Cerrar Sesión"):
+            st.session_state.password_correct = False
+            st.rerun()
+
+    # --- DASHBOARD PRINCIPAL ---
     st.title("📊 GESTION LIBRERIA LA PROFE")
 
     if not df.empty:
-        # Filtros
-        c_filt, c_per = st.columns([1, 3])
-        with c_filt:
-            filtro = st.radio("Ver:", ["Hoy", "Semana", "3 Meses", "Personalizado", "Ciclo Copias"])
-        
-        df_f = df.copy()
-        df_f['Fecha_Solo'] = df_f['Fecha'].dt.date
+        # --- FILTROS ---
+        st.markdown("### 🔍 Visualización")
+        filtro_col, periodo_col = st.columns([1, 3])
+        with filtro_col:
+            opcion_filtro = st.radio("Filtrar por:", ["Hoy", "Última Semana", "Rango Personalizado", "Mes (Ciclo Copias)", "Día Específico"])
+
+        df_filtrado = df.copy()
+        df_filtrado['Fecha_Solo'] = df_filtrado['Fecha'].dt.date 
         hoy = datetime.today().date()
-        tit = "Todo"
-        es_mes = False
+        titulo_periodo = "Todo"
+        es_vista_mes = False
 
-        with c_per:
+        with periodo_col:
             st.write("")
-            if filtro == "Hoy":
-                df_f = df_f[df_f['Fecha_Solo'] == hoy]
-                tit = "HOY"
-            elif filtro == "Semana":
-                ini = hoy - timedelta(days=7)
-                df_f = df_f[(df_f['Fecha_Solo'] >= ini) & (df_f['Fecha_Solo'] <= hoy)]
-                tit = "ÚLTIMOS 7 DÍAS"
-            elif filtro == "3 Meses":
-                ini = hoy - timedelta(days=90)
-                df_f = df_f[(df_f['Fecha_Solo'] >= ini) & (df_f['Fecha_Solo'] <= hoy)]
-                tit = "ÚLTIMOS 3 MESES"
-            elif filtro == "Personalizado":
-                c1, c2 = st.columns(2)
-                f1 = c1.date_input("Desde", hoy - timedelta(days=30))
-                f2 = c2.date_input("Hasta", hoy)
-                if f1 <= f2:
-                    df_f = df_f[(df_f['Fecha_Solo'] >= f1) & (df_f['Fecha_Solo'] <= f2)]
-                    tit = f"{f1.strftime('%d/%m')} - {f2.strftime('%d/%m')}"
-            elif filtro == "Ciclo Copias":
-                df['P_Fiscal'] = df['Fecha'].apply(get_periodo_copia)
-                mes = st.selectbox("Periodo:", sorted(df['P_Fiscal'].unique(), reverse=True))
-                df_f = df[df['P_Fiscal'] == mes].copy()
-                tit = f"PERIODO {mes}"
-                es_mes = True
-
-        st.markdown("---")
-        
-        if df_f.empty:
-            st.warning("No hay datos en este periodo.")
-        else:
-            # KPIS
-            pnl = df_f['Ganancia_Neta'].sum()
-            ventas = df_f['Total_Ventas'].sum()
-            utilidad = (pnl / ventas * 100) if ventas > 0 else 0
-            
-            st.markdown(f"""
-            <div style="background-color: #d1e7dd; padding: 15px; border-radius: 10px; text-align: center; border: 1px solid #198754;">
-                <h3 style="color: #0f5132; margin:0;">GANANCIA NETA ({tit})</h3>
-                <h1 style="color: #198754; font-size: 40px; margin:0;">${pnl:,.0f}</h1>
-                <p style="color: #0f5132; margin:0;">Margen Real: <strong>{utilidad:.1f}%</strong></p>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Ventas Totales", f"${ventas:,.0f}")
-            c2.metric("Sueldos", f"${df_f['Total_Sueldos'].sum():,.0f}")
-            c3.metric("Gastos Fijos", f"${df_f['Gastos_Fijos'].sum():,.0f}")
-            c4.metric("Copias (Cant)", f"{df_f['Cant_Copias'].sum():,.0f}")
-
-            # --- NUEVA SECCIÓN: GRÁFICOS ---
-            st.markdown("### 📈 Tendencias")
-            tab1, tab2 = st.tabs(["💰 Ventas vs Ganancia", "📉 Análisis Gastos"])
-            
-            with tab1:
-                # Preparamos datos para gráfico de línea
-                chart_data = df_f.groupby('Fecha')[['Total_Ventas', 'Ganancia_Neta']].sum()
-                st.line_chart(chart_data, color=["#0000FF", "#00FF00"]) # Azul Ventas, Verde Ganancia
-            
-            with tab2:
-                # Preparamos datos para gráfico de barras apiladas
-                gastos_data = df_f.groupby('Fecha')[['Total_Sueldos', 'Gastos_Fijos', 'Total_Costo_Copias']].sum()
-                st.bar_chart(gastos_data)
-
-            # --- SECCIÓN COPIADORAS ---
-            if es_mes:
-                st.divider()
-                st.subheader("🖨️ Control Copias")
-                tot_cop = df_f['Cant_Copias'].sum()
-                meta = 20000
-                cost_avg = df_f['Costo_Copia_Unit'].mean() if tot_cop > 0 else 0
-                k1, k2, k3 = st.columns(3)
-                k1.metric("Acumulado", f"{tot_cop:,.0f}", f"Meta: {meta}")
-                pagar = tot_cop * cost_avg if tot_cop > meta else meta * cost_avg
-                k2.metric("A Pagar", f"${pagar:,.0f}")
-                if tot_cop < meta:
-                    k3.error(f"Faltan {meta - tot_cop:,.0f}")
+            if opcion_filtro == "Hoy":
+                df_filtrado = df_filtrado[df_filtrado['Fecha_Solo'] == hoy]
+                titulo_periodo = f"HOY ({hoy.strftime('%d/%m')})"
+                
+            elif opcion_filtro == "Última Semana":
+                inicio = hoy - timedelta(days=7)
+                df_filtrado = df_filtrado[(df_filtrado['Fecha_Solo'] >= inicio) & (df_filtrado['Fecha_Solo'] <= hoy)]
+                titulo_periodo = "ÚLTIMOS 7 DÍAS"
+                
+            elif opcion_filtro == "Rango Personalizado":
+                c_inicio, c_fin = st.columns(2)
+                f_inicio = c_inicio.date_input("Desde:", hoy - timedelta(days=30))
+                f_fin = c_fin.date_input("Hasta:", hoy)
+                
+                if f_inicio <= f_fin:
+                    df_filtrado = df_filtrado[(df_filtrado['Fecha_Solo'] >= f_inicio) & (df_filtrado['Fecha_Solo'] <= f_fin)]
+                    titulo_periodo = f"DEL {f_inicio.strftime('%d/%m')} AL {f_fin.strftime('%d/%m')}"
                 else:
-                    k3.success("¡Meta Superada!")
+                    st.error("La fecha de inicio debe ser anterior a la fecha de fin.")
+                    df_filtrado = pd.DataFrame()
+                
+            elif opcion_filtro == "Mes (Ciclo Copias)":
+                df['Periodo_Fiscal'] = df['Fecha'].apply(get_periodo_copia)
+                meses = sorted(df['Periodo_Fiscal'].unique(), reverse=True)
+                mes_sel = st.selectbox("Selecciona Periodo:", meses)
+                df_filtrado = df[df['Periodo_Fiscal'] == mes_sel].copy()
+                titulo_periodo = f"PERIODO {mes_sel}"
+                es_vista_mes = True
+            elif opcion_filtro == "Día Específico":
+                dia_sel = st.date_input("Elige fecha:", hoy)
+                df_filtrado = df_filtrado[df_filtrado['Fecha_Solo'] == dia_sel]
+                titulo_periodo = f"DÍA {dia_sel.strftime('%d/%m/%Y')}"
+
+        st.divider()
+
+        if df_filtrado.empty:
+            st.info(f"No hay datos para: {titulo_periodo}")
+        else:
+            # === CÁLCULOS ===
+            pnl_total = df_filtrado['Ganancia_Neta'].sum()
+            ventas_total = df_filtrado['Total_Ventas'].sum()
+            
+            # Cálculo del % de Utilidad
+            porc_utilidad = 0
+            if ventas_total > 0:
+                porc_utilidad = (pnl_total / ventas_total) * 100
+
+            # === CARTEL PNL CON % DE UTILIDAD ===
+            st.markdown(f"""
+            <div style="background-color: #d1e7dd; border: 1px solid #198754; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px; max-width: 600px; margin: 0 auto;">
+                <h3 style="color: #0f5132; margin:0; font-size: 18px;">GANANCIA NETA ({titulo_periodo})</h3>
+                <h1 style="color: #198754; font-size: 45px; margin:0; font-weight: bold;">${pnl_total:,.0f}</h1>
+                <p style="color: #0f5132; margin:0; font-size: 16px; margin-top: 5px;">Utilidad Real: <strong>{porc_utilidad:.1f}%</strong></p>
+            </div><br>
+            """, unsafe_allow_html=True)
+
+            # === MÉTRICAS ===
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Ventas", f"${ventas_total:,.0f}")
+            col2.metric("Sueldos", f"${df_filtrado['Total_Sueldos'].sum():,.0f}")
+            col3.metric("Gastos Fijos", f"${df_filtrado['Gastos_Fijos'].sum():,.0f}")
+            col4.metric("Copias (Cant)", f"{df_filtrado['Cant_Copias'].sum():,.0f}")
+
+            if es_vista_mes:
+                st.divider()
+                st.subheader("🖨️ Análisis Mensual Copias")
+                c1, c2, c3 = st.columns(3)
+                tot_copias = df_filtrado['Cant_Copias'].sum()
+                MINIMO = 20000
+                costo_avg = df_filtrado['Costo_Copia_Unit'].mean() if tot_copias > 0 else 0
+                
+                c1.metric("Acumulado Mes", f"{tot_copias:,.0f}", f"Meta: {MINIMO}")
+                if tot_copias < MINIMO:
+                    pagar = MINIMO * costo_avg
+                    c2.metric("A Pagar (Base)", f"${pagar:,.0f}")
+                    c3.error(f"Faltan {MINIMO - tot_copias:,.0f}")
+                else:
+                    pagar = tot_copias * costo_avg
+                    c2.metric("A Pagar (Real)", f"${pagar:,.0f}")
+                    c3.success("Meta superada")
 
             st.divider()
+            st.markdown("### 📋 Gestión de Registros")
             
-            # --- TABLA Y DESCARGA ---
-            c_izq, c_der = st.columns([3, 1])
-            c_izq.markdown("### 📋 Detalle de Movimientos")
-            
-            # Botón de Descarga Excel (CSV)
-            csv = df_f.to_csv(index=False).encode('utf-8')
-            c_der.download_button(
-                label="📥 Descargar Excel",
-                data=csv,
-                file_name=f"reporte_kiosco_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-            )
-
-            # Encabezados tabla
-            cols = st.columns([1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 0.8])
-            titulos = ["Fecha", "Ventas", "Costo Rep.", "Sueldos", "Gastos", "Copias", "Neta", "Borrar"]
-            for col, tit in zip(cols, titulos):
-                col.markdown(f"**{tit}**")
+            # === TABLA ===
+            h1, h2, h3, h4, h5, h6, h7, h8 = st.columns([1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 0.8])
+            h1.markdown("**Fecha**")
+            h2.markdown("**Ventas**")
+            h3.markdown("**Costo Rep.**")
+            h4.markdown("**Sueldos**")
+            h5.markdown("**Gastos**")
+            h6.markdown("**Copias**")
+            h7.markdown("**Neta**")
+            h8.markdown("**Borrar**")
             
             st.markdown("---")
 
-            for idx, row in df_f.iterrows():
-                cols = st.columns([1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 0.8])
-                cols[0].write(row['Fecha'].strftime('%d/%m'))
-                cols[1].write(f"${row['Total_Ventas']:,.0f}")
-                cols[2].write(f"${row.get('Costo_Mercaderia',0):,.0f}")
-                cols[3].write(f"${row['Total_Sueldos']:,.0f}")
-                cols[4].write(f"${row['Gastos_Fijos']:,.0f}")
-                cols[5].write(f"${row['Total_Costo_Copias']:,.0f}")
-                color = "green" if row['Ganancia_Neta'] > 0 else "red"
-                cols[6].markdown(f":{color}[**${row['Ganancia_Neta']:,.0f}**]")
+            for index, row in df_filtrado.iterrows():
+                c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 0.8])
+                c1.write(row['Fecha'].strftime('%d/%m/%Y'))
+                c2.write(f"${row['Total_Ventas']:,.0f}")
                 
-                if cols[7].button("🗑️", key=f"d_{idx}"):
-                    delete_record_by_date(row['Fecha'])
-                    st.success("Borrado")
+                costo_rep = row.get('Costo_Mercaderia', 0)
+                c3.write(f"${costo_rep:,.0f}")
+                
+                c4.write(f"${row['Total_Sueldos']:,.0f}")
+                c5.write(f"${row['Gastos_Fijos']:,.0f}")
+                c6.write(f"${row['Total_Costo_Copias']:,.0f}")
+                
+                color = "green" if row['Ganancia_Neta'] > 0 else "red"
+                c7.markdown(f":{color}[**${row['Ganancia_Neta']:,.0f}**]")
+                
+                key_btn = f"del_{row['Fecha'].strftime('%Y%m%d')}_{index}"
+                
+                if c8.button("🗑️", key=key_btn, help="Borrar de Google Drive"):
+                    with st.spinner("Borrando de la nube..."):
+                        delete_record_by_date(row['Fecha'])
+                    st.success("Borrado.")
                     st.rerun()
+
     else:
-        st.info("👋 Carga tu primer dato en el menú de la izquierda.")
+        st.info("👋 La base de datos está vacía. Carga el primer registro a la izquierda.")
