@@ -5,22 +5,9 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, timedelta, date
 
 # --- 1. CONFIGURACIÓN ---
-st.set_page_config(
-    page_title="Librería La Profe | Dashboard",
-    layout="wide",
-    page_icon="📚",
-    initial_sidebar_state="expanded"
-)
+st.set_page_config(page_title="GESTION LIBRERIA LA PROFE", layout="wide", page_icon="📚")
 
-# --- ESTILOS CSS ---
-st.markdown("""
-<style>
-    [data-testid="stMetricValue"] { font-size: 24px; }
-    .main-header { font-size: 40px; color: #1E3A8A; font-weight: 700; }
-</style>
-""", unsafe_allow_html=True)
-
-# --- 2. CONEXIÓN ---
+# --- 2. CONEXIÓN A GOOGLE SHEETS ---
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 
 def get_connection():
@@ -35,13 +22,14 @@ def get_connection():
         client = gspread.authorize(creds)
         return client.open("Base_Datos_Kiosco").sheet1 
     except Exception as e:
-        st.error(f"⚠️ Error de conexión: {e}")
+        st.error(f"Error de conexión: {e}")
         st.stop()
 
-# --- 3. FUNCIONES ---
+# --- 3. FUNCIONES DE DATOS ---
 def load_data():
     sheet = get_connection()
     data = sheet.get_all_records()
+    
     if not data:
         return pd.DataFrame(columns=[
             "Fecha", "Venta_Efectivo", "Venta_MP", "Total_Ventas", 
@@ -52,6 +40,7 @@ def load_data():
         ])
     
     df = pd.DataFrame(data)
+    
     if 'Fecha' in df.columns:
         df['Fecha'] = pd.to_datetime(df['Fecha'])
         
@@ -83,14 +72,15 @@ def save_new_record(record_dict):
         "Cant_Copias", "Costo_Copia_Unit", "Precio_Venta_Copia", "Total_Costo_Copias",
         "Ganancia_Neta", "Notas"
     ]
-    
-    fila = []
+
+    fila_a_subir = []
     for col in orden_cols:
         val = record_dict.get(col, "")
         if isinstance(val, (datetime, date, pd.Timestamp)):
             val = val.strftime('%Y-%m-%d')
-        fila.append(val)
-    sheet.append_row(fila)
+        fila_a_subir.append(val)
+        
+    sheet.append_row(fila_a_subir)
 
 def delete_record_by_date(fecha_a_borrar):
     sheet = get_connection()
@@ -99,7 +89,7 @@ def delete_record_by_date(fecha_a_borrar):
         cell = sheet.find(fecha_str)
         sheet.delete_rows(cell.row)
     except gspread.exceptions.CellNotFound:
-        st.warning("No se encontró el registro.")
+        st.warning("No se encontró la fila.")
 
 def get_periodo_copia(fecha):
     if fecha.day > 21:
@@ -108,222 +98,238 @@ def get_periodo_copia(fecha):
     else:
         return fecha.strftime("%Y-%m (Cierre 21)")
 
-# --- 4. ACCESO ---
+# --- 4. LOGIN ---
 def check_password():
     clave_real = "libreria2024" 
     if "password_correct" not in st.session_state:
         st.session_state.password_correct = False
-    
+
     if not st.session_state.password_correct:
-        c1, c2, c3 = st.columns([1,2,1])
-        with c2:
-            st.markdown("<br><br><h2 style='text-align: center;'>🔐 Acceso Seguro</h2>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center;'>🔒 Acceso La Profe</h1>", unsafe_allow_html=True)
+        col1, col2, col3 = st.columns([1,2,1])
+        with col2:
             pass_input = st.text_input("Contraseña", type="password")
-            if st.button("Iniciar Sesión", type="primary", use_container_width=True):
+            if st.button("Ingresar", type="primary"):
                 if pass_input == clave_real:
                     st.session_state.password_correct = True
                     st.rerun()
                 else:
-                    st.error("Incorrecta")
+                    st.error("❌ Contraseña incorrecta")
         return False
     return True
 
-# --- 5. APP PRINCIPAL ---
+# --- EJECUCIÓN PRINCIPAL ---
 if check_password():
-    df = load_data()
+    
+    with st.spinner('Conectando...'):
+        df = load_data()
 
-    # === VALORES POR DEFECTO ACTUALIZADOS ===
-    # Costo Hoja: $55 | Venta Hoja: $200
+    # --- VALORES POR DEFECTO (CONFIGURADOS A TUS PRECIOS ACTUALES) ---
     def_margen = 50
     def_valor_hora = 2000.0
-    def_costo_copia = 55.0  # <--- ACTUALIZADO A $55
-    def_venta_copia = 200.0 # <--- ACTUALIZADO A $200
+    def_costo_copia = 55.0  # Costo insumo
+    def_venta_copia = 200.0 # Precio venta
     def_gastos = 0.0
 
-    # Si hay datos anteriores, intenta mantener la config del último día, 
-    # pero si el último día tenía precios viejos, priorizamos tus nuevos costos fijos.
     if not df.empty:
-        last = df.iloc[0]
-        def_margen = int(last.get('Margen_Porc', 50))
-        def_valor_hora = float(last.get('Valor_Hora', 2000.0))
-        # Nota: Podríamos leer del historial, pero mejor forzamos tus nuevos costos
-        # para que se actualicen en el formulario a partir de hoy.
-        # def_costo_copia = float(last.get('Costo_Copia_Unit', 55.0)) 
-        def_gastos = float(last.get('Gastos_Fijos', 0.0))
+        last_row = df.iloc[0]
+        def_margen = int(last_row.get('Margen_Porc', 50))
+        def_valor_hora = float(last_row.get('Valor_Hora', 2000.0))
+        # Mantenemos tus costos fijos nuevos aunque el historial tenga viejos
+        # def_costo_copia = float(last_row.get('Costo_Copia_Unit', 55.0))
+        def_gastos = float(last_row.get('Gastos_Fijos', 0.0))
 
-    # === SIDEBAR ===
+    # --- SIDEBAR (DISEÑO VIEJO/SIMPLE) ---
     with st.sidebar:
-        st.image("https://cdn-icons-png.flaticon.com/512/3330/3330314.png", width=50)
-        st.title("Librería La Profe")
+        st.title("📚 LIBRERIA LA PROFE")
         st.markdown("---")
         
-        with st.form("form_carga", clear_on_submit=True):
+        with st.form("daily_form", clear_on_submit=True):
             st.subheader("📝 Nuevo Registro")
-            fecha_input = st.date_input("Fecha", datetime.today())
+            fecha = st.date_input("Fecha", datetime.today())
             
-            with st.expander("💰 Ingresos (Caja Total)", expanded=True):
-                c1, c2 = st.columns(2)
-                v_efec = c1.number_input("Efectivo Total ($)", min_value=0.0, format="%.2f", help="Poné TODO el efectivo que contaste en la caja (Librería + Copias)")
-                v_mp = c2.number_input("Mercado Pago ($)", min_value=0.0, format="%.2f")
+            st.markdown("##### 1. Ingresos (Caja)")
+            c1, c2 = st.columns(2)
+            venta_efvo = c1.number_input("Efectivo Total ($)", min_value=0.0, format="%.2f", help="Suma total de billetes (Copias + Librería)")
+            venta_mp = c2.number_input("Mercado Pago ($)", min_value=0.0, format="%.2f")
             
-            with st.expander("🖨️ Fotocopiadora (Detalle)", expanded=True):
-                c3, c4 = st.columns(2)
-                cant_cop = c3.number_input("Cant. Copias", min_value=0, step=1)
-                cost_cop = c4.number_input("Costo Insumos ($)", value=def_costo_copia, format="%.2f", help="Tu costo (Papel + Toner)")
-                
-                precio_venta_cop = st.number_input("Precio Venta ($)", value=def_venta_copia, format="%.2f", help="A cuánto vendés la copia promedio")
+            st.markdown("##### 2. Copias (Detalle)")
+            c3, c4 = st.columns(2)
+            cant_copias = c3.number_input("Cantidad Copias", min_value=0, step=1)
+            costo_copia = c4.number_input("Costo Insumo ($)", value=def_costo_copia, format="%.2f")
             
-            with st.expander("📉 Gastos y Config"):
-                c5, c6 = st.columns(2)
-                h_staff = c5.number_input("Horas Ayuda", min_value=0.0, step=0.5)
-                v_hora = c6.number_input("Valor Hora", value=def_valor_hora, format="%.2f")
-                g_fijos = st.number_input("Gastos Varios", value=def_gastos, format="%.2f")
-                margen = st.slider("Margen Librería (%)", 10, 90, def_margen)
-                notas = st.text_input("Notas")
+            precio_venta_cop = st.number_input("Precio Venta Copia ($)", value=def_venta_copia, format="%.2f", help="Precio al público")
             
-            if st.form_submit_button("💾 Guardar Cierre", type="primary"):
-                # === LÓGICA DE CÁLCULO ===
-                tot_ventas_caja = v_efec + v_mp
+            st.markdown("##### 3. Gastos")
+            c5, c6 = st.columns(2)
+            horas_staff = c5.number_input("Horas Staff", min_value=0.0, step=0.5)
+            valor_hora = c6.number_input("Valor Hora ($)", value=def_valor_hora, format="%.2f")
+            gastos_fijos = st.number_input("Otros Gastos Fijos", value=def_gastos, format="%.2f")
+            
+            st.markdown("##### 4. Config")
+            margen_input = st.slider("Margen (%)", 10, 90, def_margen)
+            notas = st.text_input("Notas")
+            
+            submitted = st.form_submit_button("☁️ Guardar en Drive")
+
+            if submitted:
+                # === LÓGICA CORREGIDA (SE MANTIENE) ===
+                total_ventas = venta_efvo + venta_mp
                 
-                # 1. Separamos la venta de copias
-                ingreso_por_copias = cant_cop * precio_venta_cop
+                # 1. Separar venta de copias
+                ingreso_copias = cant_copias * precio_venta_cop
                 
-                # 2. Venta Librería = Caja Total - Venta Copias
-                # (Usamos max(0, ...) para evitar números negativos si hubo un error de tipeo)
-                ventas_libreria_real = max(0, tot_ventas_caja - ingreso_por_copias)
+                # 2. Venta Librería Pura (evitamos negativos)
+                venta_libreria_pura = max(0, total_ventas - ingreso_copias)
                 
-                # 3. Costo Mercadería (Solo sobre lápices, cuadernos, etc)
-                cost_merc_libreria = ventas_libreria_real * (1 - (margen / 100))
+                # 3. Costos
+                costo_mercaderia = venta_libreria_pura * (1 - (margen_input / 100))
+                total_costo_copias = cant_copias * costo_copia
                 
-                # 4. Costo Copias (Cantidad * $55)
-                tot_cost_cop = cant_cop * cost_cop
+                # 4. Ganancias
+                ganancia_bruta = total_ventas - costo_mercaderia - total_costo_copias
+                total_sueldos = horas_staff * valor_hora
+                ganancia_neta = ganancia_bruta - gastos_fijos - total_sueldos
                 
-                # 5. Ganancia Bruta
-                g_bruta = tot_ventas_caja - cost_merc_libreria - tot_cost_cop
-                
-                # 6. Ganancia Neta
-                tot_sueldos = h_staff * v_hora
-                g_neta = g_bruta - g_fijos - tot_sueldos
-                
-                new_rec = {
-                    "Fecha": fecha_input, 
-                    "Venta_Efectivo": v_efec, "Venta_MP": v_mp, "Total_Ventas": tot_ventas_caja, 
-                    "Margen_Porc": margen, 
-                    "Costo_Mercaderia": cost_merc_libreria,
-                    "Ganancia_Bruta": g_bruta,
-                    "Gastos_Fijos": g_fijos, "Horas_Trabajadas": h_staff, "Valor_Hora": v_hora, "Total_Sueldos": tot_sueldos,
-                    "Cant_Copias": cant_cop, "Costo_Copia_Unit": cost_cop, 
-                    "Precio_Venta_Copia": precio_venta_cop,
-                    "Total_Costo_Copias": tot_cost_cop, 
-                    "Ganancia_Neta": g_neta, "Notas": notas
+                new_record = {
+                    "Fecha": fecha,
+                    "Venta_Efectivo": venta_efvo, "Venta_MP": venta_mp, "Total_Ventas": total_ventas, 
+                    "Margen_Porc": margen_input,
+                    "Costo_Mercaderia": costo_mercaderia, 
+                    "Ganancia_Bruta": ganancia_bruta,
+                    "Gastos_Fijos": gastos_fijos, "Horas_Trabajadas": horas_staff, "Valor_Hora": valor_hora, "Total_Sueldos": total_sueldos,
+                    "Cant_Copias": cant_copias, "Costo_Copia_Unit": costo_copia, 
+                    "Precio_Venta_Copia": precio_venta_cop, # Guardamos el precio
+                    "Total_Costo_Copias": total_costo_copias,
+                    "Ganancia_Neta": ganancia_neta, "Notas": notas
                 }
                 
-                with st.spinner("Guardando..."):
-                    save_new_record(new_rec)
-                st.success("✅ Guardado correctamente.")
-                st.rerun()
+                with st.spinner("Subiendo datos..."):
+                    save_new_record(new_record)
                 
-        if st.sidebar.button("🔒 Salir"):
+                st.success("¡Guardado exitosamente!")
+                st.rerun()
+        
+        if st.button("🔒 Cerrar Sesión"):
             st.session_state.password_correct = False
             st.rerun()
 
-    # === DASHBOARD ===
-    st.markdown('<p class="main-header">Panel Financiero</p>', unsafe_allow_html=True)
+    # --- DASHBOARD PRINCIPAL (DISEÑO VIEJO) ---
+    st.title("📊 GESTION LIBRERIA LA PROFE")
 
     if not df.empty:
-        col_f1, col_f2 = st.columns([1, 3])
-        with col_f1:
-            filtro = st.selectbox("📅 Ver:", ["Hoy", "7 Días", "Mes Actual", "Personalizado", "Ciclo Copias"])
-        
-        df_f = df.copy()
-        df_f['Fecha_Solo'] = df_f['Fecha'].dt.date
+        # --- FILTROS (Radio buttons simples) ---
+        st.markdown("### 🔍 Visualización")
+        filtro_col, periodo_col = st.columns([1, 3])
+        with filtro_col:
+            opcion_filtro = st.radio("Filtrar por:", ["Hoy", "Última Semana", "Rango Personalizado", "Mes (Ciclo Copias)"])
+
+        df_filtrado = df.copy()
+        df_filtrado['Fecha_Solo'] = df_filtrado['Fecha'].dt.date 
         hoy = datetime.today().date()
-        tit_rango = "Histórico"
-        es_copias = False
+        titulo_periodo = "Todo"
+        es_vista_mes = False
 
-        with col_f2:
-            if filtro == "Hoy":
-                df_f = df_f[df_f['Fecha_Solo'] == hoy]
-                tit_rango = "HOY"
-            elif filtro == "7 Días":
-                ini = hoy - timedelta(days=7)
-                df_f = df_f[(df_f['Fecha_Solo'] >= ini) & (df_f['Fecha_Solo'] <= hoy)]
-                tit_rango = "ÚLTIMOS 7 DÍAS"
-            elif filtro == "Mes Actual":
-                ini = hoy.replace(day=1)
-                df_f = df_f[(df_f['Fecha_Solo'] >= ini) & (df_f['Fecha_Solo'] <= hoy)]
-                tit_rango = "ESTE MES"
-            elif filtro == "Ciclo Copias":
-                df['P_Fiscal'] = df['Fecha'].apply(get_periodo_copia)
-                sel = st.selectbox("Periodo:", sorted(df['P_Fiscal'].unique(), reverse=True))
-                df_f = df[df['P_Fiscal'] == sel].copy()
-                tit_rango = f"CICLO {sel}"
-                es_copias = True
-            elif filtro == "Personalizado":
-                c1, c2 = st.columns(2)
-                f1 = c1.date_input("Desde", hoy - timedelta(days=30))
-                f2 = c2.date_input("Hasta", hoy)
-                if f1 <= f2: df_f = df_f[(df_f['Fecha_Solo'] >= f1) & (df_f['Fecha_Solo'] <= f2)]
+        with periodo_col:
+            st.write("")
+            if opcion_filtro == "Hoy":
+                df_filtrado = df_filtrado[df_filtrado['Fecha_Solo'] == hoy]
+                titulo_periodo = f"HOY ({hoy.strftime('%d/%m')})"
+                
+            elif opcion_filtro == "Última Semana":
+                inicio = hoy - timedelta(days=7)
+                df_filtrado = df_filtrado[(df_filtrado['Fecha_Solo'] >= inicio) & (df_filtrado['Fecha_Solo'] <= hoy)]
+                titulo_periodo = "ÚLTIMOS 7 DÍAS"
+                
+            elif opcion_filtro == "Rango Personalizado":
+                c_inicio, c_fin = st.columns(2)
+                f_inicio = c_inicio.date_input("Desde:", hoy - timedelta(days=30))
+                f_fin = c_fin.date_input("Hasta:", hoy)
+                
+                if f_inicio <= f_fin:
+                    df_filtrado = df_filtrado[(df_filtrado['Fecha_Solo'] >= f_inicio) & (df_filtrado['Fecha_Solo'] <= f_fin)]
+                    titulo_periodo = f"DEL {f_inicio.strftime('%d/%m')} AL {f_fin.strftime('%d/%m')}"
+                
+            elif opcion_filtro == "Mes (Ciclo Copias)":
+                df['Periodo_Fiscal'] = df['Fecha'].apply(get_periodo_copia)
+                meses = sorted(df['Periodo_Fiscal'].unique(), reverse=True)
+                mes_sel = st.selectbox("Selecciona Periodo:", meses)
+                df_filtrado = df[df['Periodo_Fiscal'] == mes_sel].copy()
+                titulo_periodo = f"PERIODO {mes_sel}"
+                es_vista_mes = True
 
-        st.markdown("---")
+        st.divider()
 
-        if df_f.empty:
-            st.info("No hay datos.")
+        if df_filtrado.empty:
+            st.info(f"No hay datos para: {titulo_periodo}")
         else:
-            pnl = df_f['Ganancia_Neta'].sum()
-            ventas = df_f['Total_Ventas'].sum()
-            utilidad = (pnl / ventas * 100) if ventas > 0 else 0
-            
+            # === CARTEL PNL VERDE (CLÁSICO) ===
+            pnl_total = df_filtrado['Ganancia_Neta'].sum()
+            ventas_total = df_filtrado['Total_Ventas'].sum()
+            porc_utilidad = (pnl_total / ventas_total * 100) if ventas_total > 0 else 0
+
             st.markdown(f"""
-            <div style="background-color: #EFF6FF; padding: 20px; border-radius: 12px; border-left: 6px solid #1E3A8A; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div>
-                        <h4 style="margin:0; color: #555;">GANANCIA NETA ({tit_rango})</h4>
-                        <h1 style="margin:0; font-size: 45px; color: #1E3A8A;">${pnl:,.0f}</h1>
-                    </div>
-                    <div style="text-align: right;">
-                        <h4 style="margin:0; color: #555;">RENTABILIDAD</h4>
-                        <h2 style="margin:0; color: {'#16a34a' if utilidad > 20 else '#ca8a04'};">{utilidad:.1f}%</h2>
-                    </div>
-                </div>
+            <div style="background-color: #d1e7dd; border: 1px solid #198754; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px; max-width: 600px; margin: 0 auto;">
+                <h3 style="color: #0f5132; margin:0; font-size: 18px;">GANANCIA NETA ({titulo_periodo})</h3>
+                <h1 style="color: #198754; font-size: 45px; margin:0; font-weight: bold;">${pnl_total:,.0f}</h1>
+                <p style="color: #0f5132; margin:0; font-size: 16px; margin-top: 5px;">Utilidad Real: <strong>{porc_utilidad:.1f}%</strong></p>
             </div><br>
             """, unsafe_allow_html=True)
 
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("💰 Caja Total", f"${ventas:,.0f}")
-            m2.metric("📦 Costo Mercadería", f"${df_f['Costo_Mercaderia'].sum():,.0f}", help="Costo reposición (sólo librería)")
-            gastos_totales = df_f['Total_Sueldos'].sum() + df_f['Gastos_Fijos'].sum() + df_f['Total_Costo_Copias'].sum()
-            m3.metric("💸 Gastos + Copias", f"${gastos_totales:,.0f}")
-            m4.metric("📄 Cant. Copias", f"{df_f['Cant_Copias'].sum():,.0f}")
-
-            tab1, tab2 = st.tabs(["📊 Gráficos", "📋 Datos"])
+            # === MÉTRICAS SIMPLES ===
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Ventas", f"${ventas_total:,.0f}")
+            col2.metric("Sueldos", f"${df_filtrado['Total_Sueldos'].sum():,.0f}")
             
-            with tab1:
-                c_g1, c_g2 = st.columns(2)
-                with c_g1:
-                    st.subheader("Ventas vs Ganancia")
-                    st.area_chart(df_f.groupby('Fecha')[['Total_Ventas', 'Ganancia_Neta']].sum(), color=["#93C5FD", "#1E3A8A"])
-                with c_g2:
-                    st.subheader("Composición de Gastos")
-                    st.bar_chart(df_f[['Total_Sueldos', 'Gastos_Fijos', 'Total_Costo_Copias']].sum(), color="#64748B")
-                
-                if es_copias:
-                    st.divider()
-                    tot_c = df_f['Cant_Copias'].sum()
-                    meta = 20000
-                    st.metric("Progreso Meta Copias", f"{tot_c:,.0f} / {meta}", delta=tot_c-meta)
+            gastos_totales = df_filtrado['Gastos_Fijos'].sum() + df_filtrado['Total_Costo_Copias'].sum()
+            col3.metric("Gastos + Copias", f"${gastos_totales:,.0f}")
+            col4.metric("Copias (Cant)", f"{df_filtrado['Cant_Copias'].sum():,.0f}")
 
-            with tab2:
-                csv = df_f.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 Descargar CSV", csv, "reporte.csv", "text/csv")
+            if es_vista_mes:
+                st.divider()
+                st.subheader("🖨️ Análisis Mensual Copias")
+                c1, c2, c3 = st.columns(3)
+                tot_copias = df_filtrado['Cant_Copias'].sum()
+                MINIMO = 20000
+                c1.metric("Acumulado Mes", f"{tot_copias:,.0f}", f"Meta: {MINIMO}")
+                if tot_copias < MINIMO:
+                    c3.error(f"Faltan {MINIMO - tot_copias:,.0f}")
+                else:
+                    c3.success("Meta superada")
+
+            st.divider()
+            
+            # === TABLA SIMPLE (SIN DATAFRAME PRO) ===
+            st.markdown("### 📋 Gestión de Registros")
+            
+            h1, h2, h3, h4, h5, h6 = st.columns([1.5, 1.5, 1.5, 1.5, 1.5, 1])
+            h1.markdown("**Fecha**")
+            h2.markdown("**Ventas**")
+            h3.markdown("**Costo Rep.**")
+            h4.markdown("**Gastos Tot.**")
+            h5.markdown("**Neta**")
+            h6.markdown("**Acción**")
+            
+            st.markdown("---")
+
+            for index, row in df_filtrado.iterrows():
+                c1, c2, c3, c4, c5, c6 = st.columns([1.5, 1.5, 1.5, 1.5, 1.5, 1])
+                c1.write(row['Fecha'].strftime('%d/%m'))
+                c2.write(f"${row['Total_Ventas']:,.0f}")
+                c3.write(f"${row['Costo_Mercaderia']:,.0f}")
                 
-                cols_view = ["Fecha", "Total_Ventas", "Costo_Mercaderia", "Total_Costo_Copias", "Ganancia_Neta", "Notas"]
-                st.dataframe(df_f[cols_view], use_container_width=True, hide_index=True)
+                gastos_row = row['Total_Sueldos'] + row['Gastos_Fijos'] + row['Total_Costo_Copias']
+                c4.write(f"${gastos_row:,.0f}")
                 
-                with st.expander("Borrar Registros"):
-                    for i, r in df_f.iterrows():
-                        c_txt, c_btn = st.columns([4,1])
-                        c_txt.text(f"{r['Fecha'].date()} - ${r['Ganancia_Neta']:,.0f}")
-                        if c_btn.button("Eliminar", key=f"d_{i}"):
-                            delete_record_by_date(r['Fecha'])
-                            st.success("Eliminado"); st.rerun()
+                color = "green" if row['Ganancia_Neta'] > 0 else "red"
+                c5.markdown(f":{color}[**${row['Ganancia_Neta']:,.0f}**]")
+                
+                key_btn = f"del_{row['Fecha'].strftime('%Y%m%d')}_{index}"
+                if c6.button("🗑️", key=key_btn):
+                    with st.spinner("Borrando..."):
+                        delete_record_by_date(row['Fecha'])
+                    st.success("Borrado.")
+                    st.rerun()
+
+    else:
+        st.info("👋 La base de datos está vacía. Carga el primer registro a la izquierda.")
