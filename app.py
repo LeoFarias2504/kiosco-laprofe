@@ -65,7 +65,6 @@ def save_new_record(record_dict):
     except:
         pass
 
-    # Definimos el orden exacto de las columnas
     orden_cols = [
         "Fecha", "Venta_Efectivo", "Venta_MP", "Total_Ventas", 
         "Margen_Porc", "Costo_Mercaderia", "Ganancia_Bruta", 
@@ -91,6 +90,77 @@ def delete_record_by_date(fecha_a_borrar):
         sheet.delete_rows(cell.row)
     except gspread.exceptions.CellNotFound:
         st.warning("No se encontró la fila.")
+
+def recalculate_all_history():
+    """Función para recalcular toda la hoja con la lógica nueva"""
+    sheet = get_connection()
+    data = sheet.get_all_records()
+    if not data: return
+
+    df = pd.DataFrame(data)
+    
+    # Procesar y Recalcular
+    updated_rows = []
+    
+    # Encabezados exactos (ordenados)
+    headers = [
+        "Fecha", "Venta_Efectivo", "Venta_MP", "Total_Ventas", 
+        "Margen_Porc", "Costo_Mercaderia", "Ganancia_Bruta", 
+        "Gastos_Fijos", "Horas_Trabajadas", "Valor_Hora", "Total_Sueldos",
+        "Cant_Copias", "Costo_Copia_Unit", "Total_Costo_Copias",
+        "Ganancia_Neta", "Notas"
+    ]
+    updated_rows.append(headers)
+
+    for i, row in df.iterrows():
+        # Recuperar valores (limpiando simbolos si existen)
+        def clean_float(val):
+            return float(str(val).replace('$','').replace(',','')) if val else 0.0
+
+        total_ventas = clean_float(row.get('Total_Ventas', 0))
+        margen_porc = clean_float(row.get('Margen_Porc', 50))
+        cant_copias = clean_float(row.get('Cant_Copias', 0))
+        costo_copia_unit = clean_float(row.get('Costo_Copia_Unit', 0))
+        gastos_fijos = clean_float(row.get('Gastos_Fijos', 0))
+        total_sueldos = clean_float(row.get('Total_Sueldos', 0))
+        
+        # --- APLICAR NUEVA FÓRMULA ---
+        # 1. Costo Mercadería (Incluye copias implicitamente por ser % de ventas totales)
+        costo_mercaderia = total_ventas * (1 - (margen_porc / 100))
+        
+        # 2. Costo Copias (Solo visual, NO se resta)
+        total_costo_copias = cant_copias * costo_copia_unit
+        
+        # 3. Ganancia Bruta
+        ganancia_bruta = total_ventas - costo_mercaderia
+        
+        # 4. Ganancia Neta (Bruta - Gastos - Sueldos) NO restamos copias otra vez
+        ganancia_neta = ganancia_bruta - gastos_fijos - total_sueldos
+        
+        # Armar fila
+        new_row = [
+            row.get('Fecha'),
+            row.get('Venta_Efectivo'),
+            row.get('Venta_MP'),
+            total_ventas,
+            margen_porc,
+            costo_mercaderia,
+            ganancia_bruta,
+            gastos_fijos,
+            row.get('Horas_Trabajadas'),
+            row.get('Valor_Hora'),
+            total_sueldos,
+            cant_copias,
+            costo_copia_unit,
+            total_costo_copias,
+            ganancia_neta,
+            row.get('Notas', '')
+        ]
+        updated_rows.append(new_row)
+
+    # Actualizar Hoja de Golpe
+    sheet.clear()
+    sheet.update(updated_rows)
 
 def get_periodo_copia(fecha):
     if fecha.day > 21:
@@ -128,7 +198,7 @@ if check_password():
     # --- VALORES POR DEFECTO ---
     def_margen = 50
     def_valor_hora = 2000.0
-    def_costo_copia = 55.0  # Costo insumo (papel/toner)
+    def_costo_copia = 55.0  
     def_gastos = 0.0
 
     if not df.empty:
@@ -170,21 +240,11 @@ if check_password():
             submitted = st.form_submit_button("☁️ Guardar en Drive")
 
             if submitted:
-                # === LÓGICA CORREGIDA SEGÚN TU PEDIDO ===
+                # === LÓGICA DE GUARDADO DIARIO ===
                 total_ventas = venta_efvo + venta_mp
-                
-                # 1. Calculamos el Costo de Reposición sobre TODO el dinero
-                # (Aquí ya está incluido el costo de las copias según tu lógica)
                 costo_mercaderia = total_ventas * (1 - (margen_input / 100))
-                
-                # 2. Calculamos el costo de copias SOLO PARA GUARDARLO (Informativo)
                 total_costo_copias = cant_copias * costo_copia
-                
-                # 3. Ganancia Bruta = Ventas - Costo Reposición
-                # (NO restamos las copias porque ya están dentro del Costo Mercadería)
                 ganancia_bruta = total_ventas - costo_mercaderia
-                
-                # 4. Ganancia Neta = Bruta - Gastos - Sueldos
                 total_sueldos = horas_staff * valor_hora
                 ganancia_neta = ganancia_bruta - gastos_fijos - total_sueldos
                 
@@ -205,7 +265,17 @@ if check_password():
                 
                 st.success("¡Guardado exitosamente!")
                 st.rerun()
+
+        # === BOTÓN DE RECALCULO ===
+        st.markdown("---")
+        st.markdown("##### ⚠️ Mantenimiento")
+        if st.button("🔄 RECALCULAR HISTORIAL"):
+            with st.spinner("Recalculando todas las ganancias con la fórmula nueva... (Esto toma unos segundos)"):
+                recalculate_all_history()
+            st.success("¡Base de datos actualizada correctamente!")
+            st.rerun()
         
+        st.markdown("---")
         if st.button("🔒 Cerrar Sesión"):
             st.session_state.password_correct = False
             st.rerun()
@@ -259,7 +329,7 @@ if check_password():
         if df_filtrado.empty:
             st.info(f"No hay datos para: {titulo_periodo}")
         else:
-            # === CARTEL PNL VERDE (CLÁSICO) ===
+            # === CARTEL PNL VERDE ===
             pnl_total = df_filtrado['Ganancia_Neta'].sum()
             ventas_total = df_filtrado['Total_Ventas'].sum()
             porc_utilidad = (pnl_total / ventas_total * 100) if ventas_total > 0 else 0
@@ -278,9 +348,8 @@ if check_password():
             col2.metric("Sueldos", f"${df_filtrado['Total_Sueldos'].sum():,.0f}")
             col3.metric("Gastos Fijos", f"${df_filtrado['Gastos_Fijos'].sum():,.0f}")
             
-            # Mostramos el costo de copias aquí pero aclaramos visualmente
             tot_cost_copias = df_filtrado['Total_Costo_Copias'].sum()
-            col4.metric("Costo Copias (Info)", f"${tot_cost_copias:,.0f}", help="Este monto YA está incluido en el Costo de Mercadería, no se resta dos veces.")
+            col4.metric("Costo Copias (Info)", f"${tot_cost_copias:,.0f}", help="Incluido en Costo Mercadería.")
 
             if es_vista_mes:
                 st.divider()
@@ -296,10 +365,8 @@ if check_password():
 
             st.divider()
             
-            # === TABLA SIMPLE ===
+            # === TABLA ===
             st.markdown("### 📋 Gestión de Registros")
-            
-            # Columnas: Fecha | Ventas | Costo Rep | Gasto Copia (Info) | Sueldos | Neta | Borrar
             h1, h2, h3, h4, h5, h6, h7 = st.columns([1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 0.8])
             h1.markdown("**Fecha**")
             h2.markdown("**Ventas**")
@@ -315,13 +382,8 @@ if check_password():
                 c1, c2, c3, c4, c5, c6, c7 = st.columns([1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 0.8])
                 c1.write(row['Fecha'].strftime('%d/%m'))
                 c2.write(f"${row['Total_Ventas']:,.0f}")
-                
-                # Costo Reposición (Incluye lo de las copias)
                 c3.write(f"${row['Costo_Mercaderia']:,.0f}")
-                
-                # Costo Copias (Solo visual)
                 c4.write(f"${row['Total_Costo_Copias']:,.0f}")
-                
                 c5.write(f"${row['Total_Sueldos']:,.0f}")
                 
                 color = "green" if row['Ganancia_Neta'] > 0 else "red"
