@@ -98,11 +98,8 @@ def recalculate_all_history():
     if not data: return
 
     df = pd.DataFrame(data)
-    
-    # Procesar y Recalcular
     updated_rows = []
     
-    # Encabezados exactos (ordenados)
     headers = [
         "Fecha", "Venta_Efectivo", "Venta_MP", "Total_Ventas", 
         "Margen_Porc", "Costo_Mercaderia", "Ganancia_Bruta", 
@@ -113,7 +110,6 @@ def recalculate_all_history():
     updated_rows.append(headers)
 
     for i, row in df.iterrows():
-        # Recuperar valores (limpiando simbolos si existen)
         def clean_float(val):
             return float(str(val).replace('$','').replace(',','')) if val else 0.0
 
@@ -124,41 +120,20 @@ def recalculate_all_history():
         gastos_fijos = clean_float(row.get('Gastos_Fijos', 0))
         total_sueldos = clean_float(row.get('Total_Sueldos', 0))
         
-        # --- APLICAR NUEVA FÓRMULA ---
-        # 1. Costo Mercadería (Incluye copias implicitamente por ser % de ventas totales)
         costo_mercaderia = total_ventas * (1 - (margen_porc / 100))
-        
-        # 2. Costo Copias (Solo visual, NO se resta)
         total_costo_copias = cant_copias * costo_copia_unit
-        
-        # 3. Ganancia Bruta
         ganancia_bruta = total_ventas - costo_mercaderia
-        
-        # 4. Ganancia Neta (Bruta - Gastos - Sueldos) NO restamos copias otra vez
         ganancia_neta = ganancia_bruta - gastos_fijos - total_sueldos
         
-        # Armar fila
         new_row = [
-            row.get('Fecha'),
-            row.get('Venta_Efectivo'),
-            row.get('Venta_MP'),
-            total_ventas,
-            margen_porc,
-            costo_mercaderia,
-            ganancia_bruta,
-            gastos_fijos,
-            row.get('Horas_Trabajadas'),
-            row.get('Valor_Hora'),
-            total_sueldos,
-            cant_copias,
-            costo_copia_unit,
-            total_costo_copias,
-            ganancia_neta,
-            row.get('Notas', '')
+            row.get('Fecha'), row.get('Venta_Efectivo'), row.get('Venta_MP'),
+            total_ventas, margen_porc, costo_mercaderia, ganancia_bruta,
+            gastos_fijos, row.get('Horas_Trabajadas'), row.get('Valor_Hora'),
+            total_sueldos, cant_copias, costo_copia_unit, total_costo_copias,
+            ganancia_neta, row.get('Notas', '')
         ]
         updated_rows.append(new_row)
 
-    # Actualizar Hoja de Golpe
     sheet.clear()
     sheet.update(updated_rows)
 
@@ -208,7 +183,7 @@ if check_password():
         def_costo_copia = float(last_row.get('Costo_Copia_Unit', 55.0))
         def_gastos = float(last_row.get('Gastos_Fijos', 0.0))
 
-    # --- SIDEBAR (DISEÑO VIEJO) ---
+    # --- SIDEBAR ---
     with st.sidebar:
         st.title("📚 LIBRERIA LA PROFE")
         st.markdown("---")
@@ -240,7 +215,7 @@ if check_password():
             submitted = st.form_submit_button("☁️ Guardar en Drive")
 
             if submitted:
-                # === LÓGICA DE GUARDADO DIARIO ===
+                # LÓGICA DE GUARDADO
                 total_ventas = venta_efvo + venta_mp
                 costo_mercaderia = total_ventas * (1 - (margen_input / 100))
                 total_costo_copias = cant_copias * costo_copia
@@ -266,13 +241,12 @@ if check_password():
                 st.success("¡Guardado exitosamente!")
                 st.rerun()
 
-        # === BOTÓN DE RECALCULO ===
         st.markdown("---")
         st.markdown("##### ⚠️ Mantenimiento")
         if st.button("🔄 RECALCULAR HISTORIAL"):
-            with st.spinner("Recalculando todas las ganancias con la fórmula nueva... (Esto toma unos segundos)"):
+            with st.spinner("Recalculando..."):
                 recalculate_all_history()
-            st.success("¡Base de datos actualizada correctamente!")
+            st.success("¡Base actualizada!")
             st.rerun()
         
         st.markdown("---")
@@ -311,7 +285,6 @@ if check_password():
                 c_inicio, c_fin = st.columns(2)
                 f_inicio = c_inicio.date_input("Desde:", hoy - timedelta(days=30))
                 f_fin = c_fin.date_input("Hasta:", hoy)
-                
                 if f_inicio <= f_fin:
                     df_filtrado = df_filtrado[(df_filtrado['Fecha_Solo'] >= f_inicio) & (df_filtrado['Fecha_Solo'] <= f_fin)]
                     titulo_periodo = f"DEL {f_inicio.strftime('%d/%m')} AL {f_fin.strftime('%d/%m')}"
@@ -347,7 +320,6 @@ if check_password():
             col1.metric("Ventas Totales", f"${ventas_total:,.0f}")
             col2.metric("Sueldos", f"${df_filtrado['Total_Sueldos'].sum():,.0f}")
             col3.metric("Gastos Fijos", f"${df_filtrado['Gastos_Fijos'].sum():,.0f}")
-            
             tot_cost_copias = df_filtrado['Total_Costo_Copias'].sum()
             col4.metric("Costo Copias (Info)", f"${tot_cost_copias:,.0f}", help="Incluido en Costo Mercadería.")
 
@@ -365,32 +337,36 @@ if check_password():
 
             st.divider()
             
-            # === TABLA ===
+            # === TABLA COMPLETA CON GASTOS FIJOS ===
             st.markdown("### 📋 Gestión de Registros")
-            h1, h2, h3, h4, h5, h6, h7 = st.columns([1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 0.8])
+            
+            # Ahora son 8 columnas para que entre todo bien
+            h1, h2, h3, h4, h5, h6, h7, h8 = st.columns([1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 0.8])
             h1.markdown("**Fecha**")
             h2.markdown("**Ventas**")
             h3.markdown("**Costo Rep.**")
-            h4.markdown("**Costo Copias**") # Informativo
+            h4.markdown("**C. Copias**") # Info
             h5.markdown("**Sueldos**")
-            h6.markdown("**Neta**")
-            h7.markdown("**Borrar**")
+            h6.markdown("**Gastos Fijos**") # NUEVO
+            h7.markdown("**Neta**")
+            h8.markdown("**Borrar**")
             
             st.markdown("---")
 
             for index, row in df_filtrado.iterrows():
-                c1, c2, c3, c4, c5, c6, c7 = st.columns([1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 0.8])
+                c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 0.8])
                 c1.write(row['Fecha'].strftime('%d/%m'))
                 c2.write(f"${row['Total_Ventas']:,.0f}")
                 c3.write(f"${row['Costo_Mercaderia']:,.0f}")
                 c4.write(f"${row['Total_Costo_Copias']:,.0f}")
                 c5.write(f"${row['Total_Sueldos']:,.0f}")
+                c6.write(f"${row['Gastos_Fijos']:,.0f}") # Columna nueva con el dato
                 
                 color = "green" if row['Ganancia_Neta'] > 0 else "red"
-                c6.markdown(f":{color}[**${row['Ganancia_Neta']:,.0f}**]")
+                c7.markdown(f":{color}[**${row['Ganancia_Neta']:,.0f}**]")
                 
                 key_btn = f"del_{row['Fecha'].strftime('%Y%m%d')}_{index}"
-                if c7.button("🗑️", key=key_btn):
+                if c8.button("🗑️", key=key_btn):
                     with st.spinner("Borrando..."):
                         delete_record_by_date(row['Fecha'])
                     st.success("Borrado.")
