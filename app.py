@@ -489,9 +489,9 @@ if check_password():
                         col_ef.metric("💵 Efectivo",    f"${total_efvo:,.0f}", f"{porc_efvo:.1f}%")
                         col_mp.metric("📱 Mercado Pago", f"${total_mp:,.0f}",  f"{porc_mp:.1f}%")
                         df_pie = pd.DataFrame({
-                            "Medio": ["Efectivo", "Mercado Pago"],
-                            "Monto": [total_efvo, total_mp]
-                        }).set_index("Medio")
+                            "Efectivo": [total_efvo],
+                            "Mercado Pago": [total_mp]
+                        })
                         col_chart.bar_chart(df_pie, color=["#198754", "#0d6efd"])
                     else:
                         st.info("Sin datos de medios de pago para este período.")
