@@ -3,7 +3,6 @@ import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, timedelta, date
-import io
 
 # --- 1. CONFIGURACIÓN ---
 st.set_page_config(page_title="GESTION LIBRERIA LA PROFE", layout="wide", page_icon="📚")
@@ -178,11 +177,8 @@ def get_semaforo(porc_utilidad):
     else:
         return "🔴", "Por debajo"
 
-def df_to_excel(df_export):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df_export.to_excel(writer, index=False, sheet_name='Datos')
-    return output.getvalue()
+def df_to_csv(df_export):
+    return df_export.to_csv(index=False).encode('utf-8')
 
 # --- 4. LOGIN ---
 def check_password():
@@ -481,10 +477,10 @@ if check_password():
                     df_export['Fecha'] = df_export['Fecha'].dt.strftime('%d/%m/%Y')
 
                 st.download_button(
-                    label="📥 Exportar Excel",
-                    data=df_to_excel(df_export),
-                    file_name=f"libreria_{titulo_periodo.replace(' ', '_')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    label="📥 Exportar CSV",
+                    data=df_to_csv(df_export),
+                    file_name=f"libreria_{titulo_periodo.replace(' ', '_')}.csv",
+                    mime="text/csv",
                     use_container_width=True
                 )
 
