@@ -419,17 +419,55 @@ if check_password():
             delta_ventas = f"${ventas_total - ventas_anterior:,.0f} vs sem. ant." if ventas_anterior is not None else None
             delta_pnl    = f"${pnl_total - pnl_anterior:,.0f} vs sem. ant."    if pnl_anterior    is not None else None
 
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Ventas Totales", f"${ventas_total:,.0f}", delta_ventas)
-            col2.metric("Ganancia Neta",  f"${pnl_total:,.0f}",   delta_pnl)
-            col3.metric("Sueldos",        f"${df_filtrado['Total_Sueldos'].sum():,.0f}")
-            col4.metric("Gastos Fijos",   f"${df_filtrado['Gastos_Fijos'].sum():,.0f}")
+            dias_con_datos = df_filtrado['Fecha'].nunique()
+            promedio_diario = ventas_total / dias_con_datos if dias_con_datos > 0 else 0
+
+            col1, col2, col3, col4, col5 = st.columns(5)
+            col1.metric("Ventas Totales",   f"${ventas_total:,.0f}",  delta_ventas)
+            col2.metric("Ganancia Neta",    f"${pnl_total:,.0f}",     delta_pnl)
+            col3.metric("Promedio / Día",   f"${promedio_diario:,.0f}")
+            col4.metric("Sueldos",          f"${df_filtrado['Total_Sueldos'].sum():,.0f}")
+            col5.metric("Gastos Fijos",     f"${df_filtrado['Gastos_Fijos'].sum():,.0f}")
+
+            # === RESUMEN: MEJOR Y PEOR DÍA ===
+            if len(df_filtrado) > 1:
+                idx_mejor = df_filtrado['Ganancia_Neta'].idxmax()
+                idx_peor  = df_filtrado['Ganancia_Neta'].idxmin()
+                mejor_dia = df_filtrado.loc[idx_mejor]
+                peor_dia  = df_filtrado.loc[idx_peor]
+
+                rm, rp = st.columns(2)
+                rm.success(
+                    f"📈 **Mejor día:** {mejor_dia['Fecha'].strftime('%d/%m')} — "
+                    f"${mejor_dia['Ganancia_Neta']:,.0f} netos"
+                )
+                rp.error(
+                    f"📉 **Peor día:** {peor_dia['Fecha'].strftime('%d/%m')} — "
+                    f"${peor_dia['Ganancia_Neta']:,.0f} netos"
+                )
+
+            # === ALERTA DÍAS SIN REGISTRAR ===
+            if opcion_filtro in ("Última Semana", "Rango Personalizado", "Mes (Ciclo Copias)"):
+                fechas_con_datos = set(df_filtrado['Fecha'].dt.date)
+                fecha_min = df_filtrado['Fecha'].min().date()
+                fecha_max = df_filtrado['Fecha'].max().date()
+                rango_completo = set(
+                    fecha_min + timedelta(days=i)
+                    for i in range((fecha_max - fecha_min).days + 1)
+                )
+                dias_faltantes = sorted(
+                    d for d in rango_completo
+                    if d not in fechas_con_datos and d.weekday() < 6  # excluye domingos
+                )
+                if dias_faltantes:
+                    lista = ", ".join(d.strftime('%d/%m') for d in dias_faltantes)
+                    st.warning(f"⚠️ **Días sin registrar en el período:** {lista}")
 
             # === GRÁFICO DE EVOLUCIÓN ===
             if len(df_filtrado) > 1:
                 st.divider()
                 st.markdown("### 📈 Evolución")
-                tab_gan, tab_ven = st.tabs(["Ganancia Neta", "Ventas"])
+                tab_gan, tab_ven, tab_mp = st.tabs(["Ganancia Neta", "Ventas", "Efectivo vs MP"])
 
                 df_chart = (
                     df_filtrado.sort_values('Fecha')[['Fecha', 'Ganancia_Neta', 'Total_Ventas']]
@@ -441,6 +479,22 @@ if check_password():
                     st.line_chart(df_chart[['Ganancia_Neta']], color="#198754")
                 with tab_ven:
                     st.bar_chart(df_chart[['Total_Ventas']], color="#0d6efd")
+                with tab_mp:
+                    total_efvo = df_filtrado['Venta_Efectivo'].sum()
+                    total_mp   = df_filtrado['Venta_MP'].sum()
+                    if total_efvo + total_mp > 0:
+                        porc_efvo = total_efvo / (total_efvo + total_mp) * 100
+                        porc_mp   = total_mp   / (total_efvo + total_mp) * 100
+                        col_ef, col_mp, col_chart = st.columns([1, 1, 2])
+                        col_ef.metric("💵 Efectivo",    f"${total_efvo:,.0f}", f"{porc_efvo:.1f}%")
+                        col_mp.metric("📱 Mercado Pago", f"${total_mp:,.0f}",  f"{porc_mp:.1f}%")
+                        df_pie = pd.DataFrame({
+                            "Medio": ["Efectivo", "Mercado Pago"],
+                            "Monto": [total_efvo, total_mp]
+                        }).set_index("Medio")
+                        col_chart.bar_chart(df_pie, color=["#198754", "#0d6efd"])
+                    else:
+                        st.info("Sin datos de medios de pago para este período.")
 
             # === ANÁLISIS MENSUAL COPIAS ===
             if es_vista_mes:
@@ -461,6 +515,28 @@ if check_password():
                     progreso,
                     text=f"{tot_copias:,.0f} / {COPIAS_META_MENSUAL:,} copias"
                 )
+
+                # --- RESUMEN POR SEMANA ---
+                st.markdown("##### 📅 Resumen por semana")
+                df_sem = df_filtrado.copy()
+                df_sem['Semana'] = df_sem['Fecha'].dt.to_period('W').apply(
+                    lambda r: f"{r.start_time.strftime('%d/%m')} – {r.end_time.strftime('%d/%m')}"
+                )
+                resumen_sem = (
+                    df_sem.groupby('Semana', sort=False)
+                    .agg(
+                        Ventas=('Total_Ventas', 'sum'),
+                        Gan_Neta=('Ganancia_Neta', 'sum'),
+                        Copias=('Cant_Copias', 'sum'),
+                        Dias=('Fecha', 'nunique')
+                    )
+                    .reset_index()
+                )
+                resumen_sem.columns = ['Semana', 'Ventas', 'Ganancia Neta', 'Copias', 'Días']
+                resumen_sem['Ventas']        = resumen_sem['Ventas'].apply(lambda x: f"${x:,.0f}")
+                resumen_sem['Ganancia Neta'] = resumen_sem['Ganancia Neta'].apply(lambda x: f"${x:,.0f}")
+                resumen_sem['Copias']        = resumen_sem['Copias'].apply(lambda x: f"{x:,.0f}")
+                st.dataframe(resumen_sem, use_container_width=True, hide_index=True)
 
             st.divider()
 
