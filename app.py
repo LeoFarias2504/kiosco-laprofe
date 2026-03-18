@@ -178,7 +178,7 @@ def get_semaforo(porc_utilidad):
         return "🔴", "Por debajo"
 
 def df_to_csv(df_export):
-    return df_export.to_csv(index=False).encode('utf-8')
+    return df_export.to_csv(index=False, sep=';').encode('utf-8-sig')
 
 # --- 4. LOGIN ---
 def check_password():
