@@ -5,7 +5,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, timedelta, date
 
 # ============================================================
-# 1. CONFIGURACIÓN
+# 1. CONFIGURACIÓNo
 # ============================================================
 st.set_page_config(page_title="GESTION LIBRERIA LA PROFE", layout="wide", page_icon="📚")
 
