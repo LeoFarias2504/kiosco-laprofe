@@ -41,7 +41,6 @@ def load_data():
     
     df = pd.DataFrame(data)
     
-    # Adaptación para registros viejos que no tenían la columna 'Local'
     if "Local" not in df.columns:
         df.insert(1, "Local", "Librería Principal")
     else:
@@ -90,13 +89,13 @@ def save_new_record(record_dict):
 
 def delete_record_by_date_and_local(fecha_a_borrar, local_a_borrar):
     sheet = get_connection()
-    fecha_str = fecha_a_borrar.strftime('%Y-%m-%d')
+    fecha_str = fecha_a_borrar.strftime('%Y-%m-%d') if not isinstance(fecha_a_borrar, str) else fecha_a_borrar
     
     data = sheet.get_all_records()
     row_to_delete = None
     
     for i, row in enumerate(data):
-        if str(row.get('Fecha', '')) == fecha_str and str(row.get('Local', 'Librería Principal')) == local_a_borrar:
+        if str(row.get('Fecha', ''))[:10] == fecha_str[:10] and str(row.get('Local', 'Librería Principal')) == local_a_borrar:
             row_to_delete = i + 2
             break
             
@@ -104,6 +103,37 @@ def delete_record_by_date_and_local(fecha_a_borrar, local_a_borrar):
         sheet.delete_rows(row_to_delete)
     else:
         st.warning("No se encontró el registro exacto.")
+
+def update_record_in_sheet(original_fecha, original_local, new_record_dict):
+    sheet = get_connection()
+    fecha_str = original_fecha.strftime('%Y-%m-%d') if not isinstance(original_fecha, str) else original_fecha
+    
+    data = sheet.get_all_records()
+    row_to_update = None
+    
+    for i, row in enumerate(data):
+        if str(row.get('Fecha', ''))[:10] == fecha_str[:10] and str(row.get('Local', 'Librería Principal')) == original_local:
+            row_to_update = i + 2
+            break
+            
+    if row_to_update:
+        orden_cols = [
+            "Fecha", "Local", "Venta_Efectivo", "Venta_MP", "Total_Ventas", 
+            "Margen_Porc", "Costo_Mercaderia", "Ganancia_Bruta", 
+            "Gastos_Fijos", "Horas_Trabajadas", "Valor_Hora", "Total_Sueldos",
+            "Cant_Copias", "Costo_Copia_Unit", "Total_Costo_Copias",
+            "Ganancia_Neta", "Notas"
+        ]
+        fila_a_subir = []
+        for col in orden_cols:
+            val = new_record_dict.get(col, "")
+            if isinstance(val, (datetime, date, pd.Timestamp)):
+                val = val.strftime('%Y-%m-%d')
+            fila_a_subir.append(val)
+            
+        sheet.update(values=[fila_a_subir], range_name=f"A{row_to_update}:Q{row_to_update}")
+    else:
+        st.error("No se pudo encontrar la fila original para actualizar.")
 
 def recalculate_all_history():
     sheet = get_connection()
@@ -187,18 +217,29 @@ if check_password():
     with st.spinner('Conectando...'):
         df = load_data()
 
-    # --- VALORES POR DEFECTO ---
-    def_margen = 50
-    def_valor_hora = 2000.0
-    def_costo_copia = 55.0  
-    def_gastos = 0.0
+    # --- MEMORIA DE VALORES POR DEFECTO PARA CADA LOCAL ---
+    # Valores base por si no hay registros previos
+    def_m_lib, def_vh_lib, def_cc_lib, def_gf_lib = 50, 2000.0, 55.0, 0.0
+    def_m_col, def_vh_col, def_cc_col, def_gf_col = 50, 2000.0, 55.0, 0.0
 
     if not df.empty:
-        last_row = df.iloc[0]
-        def_margen = int(last_row.get('Margen_Porc', 50))
-        def_valor_hora = float(last_row.get('Valor_Hora', 2000.0))
-        def_costo_copia = float(last_row.get('Costo_Copia_Unit', 55.0))
-        def_gastos = float(last_row.get('Gastos_Fijos', 0.0))
+        # Extraemos los últimos datos de la Librería
+        df_lib = df[df['Local'] == "Librería Principal"]
+        if not df_lib.empty:
+            last_lib = df_lib.iloc[0]
+            def_m_lib = int(last_lib.get('Margen_Porc', 50))
+            def_vh_lib = float(last_lib.get('Valor_Hora', 2000.0))
+            def_cc_lib = float(last_lib.get('Costo_Copia_Unit', 55.0))
+            def_gf_lib = float(last_lib.get('Gastos_Fijos', 0.0))
+            
+        # Extraemos los últimos datos del Colegio
+        df_col = df[df['Local'] == "Colegio"]
+        if not df_col.empty:
+            last_col = df_col.iloc[0]
+            def_m_col = int(last_col.get('Margen_Porc', 50))
+            def_vh_col = float(last_col.get('Valor_Hora', 2000.0))
+            def_cc_col = float(last_col.get('Costo_Copia_Unit', 55.0))
+            def_gf_col = float(last_col.get('Gastos_Fijos', 0.0))
 
     # --- SIDEBAR (CARGA POR PESTAÑAS) ---
     with st.sidebar:
@@ -221,16 +262,16 @@ if check_password():
                 st.markdown("##### 2. Copias (Solo Informativo)")
                 c3, c4 = st.columns(2)
                 cant_copias_lib = c3.number_input("Cantidad Copias", min_value=0, step=1, key="cant_lib")
-                costo_copia_lib = c4.number_input("Costo Insumo ($)", value=def_costo_copia, format="%.2f", key="costo_c_lib")
+                costo_copia_lib = c4.number_input("Costo Insumo ($)", value=def_cc_lib, format="%.2f", key="costo_c_lib")
                 
                 st.markdown("##### 3. Gastos")
                 c5, c6 = st.columns(2)
                 horas_staff_lib = c5.number_input("Horas Staff", min_value=0.0, step=0.5, key="horas_lib")
-                valor_hora_lib = c6.number_input("Valor Hora ($)", value=def_valor_hora, format="%.2f", key="v_hora_lib")
-                gastos_fijos_lib = st.number_input("Otros Gastos Fijos", value=def_gastos, format="%.2f", key="g_fijos_lib")
+                valor_hora_lib = c6.number_input("Valor Hora ($)", value=def_vh_lib, format="%.2f", key="v_hora_lib")
+                gastos_fijos_lib = st.number_input("Otros Gastos Fijos", value=def_gf_lib, format="%.2f", key="g_fijos_lib")
                 
                 st.markdown("##### 4. Config")
-                margen_input_lib = st.slider("Margen (%)", 10, 90, def_margen, key="margen_lib")
+                margen_input_lib = st.slider("Margen (%)", 10, 90, def_m_lib, key="margen_lib")
                 notas_lib = st.text_input("Notas", key="notas_lib")
                 
                 if st.form_submit_button("☁️ Guardar Librería"):
@@ -269,16 +310,16 @@ if check_password():
                 st.markdown("##### 2. Copias (Solo Informativo)")
                 c3, c4 = st.columns(2)
                 cant_copias_col = c3.number_input("Cantidad Copias", min_value=0, step=1, key="cant_col")
-                costo_copia_col = c4.number_input("Costo Insumo ($)", value=def_costo_copia, format="%.2f", key="costo_c_col")
+                costo_copia_col = c4.number_input("Costo Insumo ($)", value=def_cc_col, format="%.2f", key="costo_c_col")
                 
                 st.markdown("##### 3. Gastos")
                 c5, c6 = st.columns(2)
                 horas_staff_col = c5.number_input("Horas Staff", min_value=0.0, step=0.5, key="horas_col")
-                valor_hora_col = c6.number_input("Valor Hora ($)", value=def_valor_hora, format="%.2f", key="v_hora_col")
-                gastos_fijos_col = st.number_input("Otros Gastos Fijos", value=def_gastos, format="%.2f", key="g_fijos_col")
+                valor_hora_col = c6.number_input("Valor Hora ($)", value=def_vh_col, format="%.2f", key="v_hora_col")
+                gastos_fijos_col = st.number_input("Otros Gastos Fijos", value=def_gf_col, format="%.2f", key="g_fijos_col")
                 
                 st.markdown("##### 4. Config")
-                margen_input_col = st.slider("Margen (%)", 10, 90, def_margen, key="margen_col")
+                margen_input_col = st.slider("Margen (%)", 10, 90, def_m_col, key="margen_col")
                 notas_col = st.text_input("Notas", key="notas_col")
                 
                 if st.form_submit_button("☁️ Guardar Colegio"):
@@ -367,10 +408,67 @@ if check_password():
 
         st.divider()
 
+        # === MODO EDICIÓN ===
+        if "edit_record" in st.session_state:
+            st.markdown("### ✏️ Modificar Registro")
+            rec = st.session_state.edit_record
+            
+            with st.form("form_edit"):
+                st.info(f"Editando registro del **{rec['Fecha'].strftime('%d/%m/%Y')}** - **{rec['Local']}**")
+                
+                c_e1, c_e2 = st.columns(2)
+                edit_efvo = c_e1.number_input("Efectivo ($)", value=float(rec['Venta_Efectivo']))
+                edit_mp = c_e2.number_input("Mercado Pago ($)", value=float(rec['Venta_MP']))
+                
+                c_e3, c_e4, c_e5 = st.columns(3)
+                edit_copias = c_e3.number_input("Cant. Copias", value=int(rec['Cant_Copias']))
+                edit_costo_c = c_e4.number_input("Costo Insumo", value=float(rec['Costo_Copia_Unit']))
+                edit_margen = c_e5.slider("Margen (%)", 10, 90, int(rec['Margen_Porc']))
+                
+                c_e6, c_e7, c_e8 = st.columns(3)
+                edit_horas = c_e6.number_input("Horas Staff", value=float(rec['Horas_Trabajadas']))
+                edit_v_hora = c_e7.number_input("Valor Hora ($)", value=float(rec['Valor_Hora']))
+                edit_fijos = c_e8.number_input("Gastos Fijos", value=float(rec['Gastos_Fijos']))
+                
+                edit_notas = st.text_input("Notas", value=str(rec['Notas']))
+                
+                col_save, col_cancel = st.columns(2)
+                with col_save:
+                    if st.form_submit_button("💾 Guardar Cambios", type="primary"):
+                        total_ventas = edit_efvo + edit_mp
+                        costo_mercaderia = total_ventas * (1 - (edit_margen / 100))
+                        total_costo_copias = edit_copias * edit_costo_c
+                        ganancia_bruta = total_ventas - costo_mercaderia
+                        total_sueldos = edit_horas * edit_v_hora
+                        ganancia_neta = ganancia_bruta - edit_fijos - total_sueldos
+                        
+                        updated_rec = {
+                            "Fecha": rec['Fecha'], "Local": rec['Local'],
+                            "Venta_Efectivo": edit_efvo, "Venta_MP": edit_mp, "Total_Ventas": total_ventas, 
+                            "Margen_Porc": edit_margen, "Costo_Mercaderia": costo_mercaderia, 
+                            "Ganancia_Bruta": ganancia_bruta, "Gastos_Fijos": edit_fijos, 
+                            "Horas_Trabajadas": edit_horas, "Valor_Hora": edit_v_hora, "Total_Sueldos": total_sueldos,
+                            "Cant_Copias": edit_copias, "Costo_Copia_Unit": edit_costo_c, 
+                            "Total_Costo_Copias": total_costo_copias, "Ganancia_Neta": ganancia_neta, "Notas": edit_notas
+                        }
+                        
+                        with st.spinner("Actualizando en la nube..."):
+                            update_record_in_sheet(rec['Fecha'], rec['Local'], updated_rec)
+                        
+                        del st.session_state.edit_record
+                        st.success("¡Registro actualizado con éxito!")
+                        st.rerun()
+                        
+                with col_cancel:
+                    if st.form_submit_button("❌ Cancelar"):
+                        del st.session_state.edit_record
+                        st.rerun()
+            st.divider()
+
         if df_filtrado.empty:
             st.info(f"No hay datos para mostrar.")
         else:
-            # === CARTEL PNL VERDE (Restaurado al diseño original exacto) ===
+            # === CARTEL PNL VERDE ===
             pnl_total = df_filtrado['Ganancia_Neta'].sum()
             ventas_total = df_filtrado['Total_Ventas'].sum()
             porc_utilidad = (pnl_total / ventas_total * 100) if ventas_total > 0 else 0
@@ -409,10 +507,10 @@ if check_password():
 
             st.divider()
             
-            # === TABLA (Restaurada a 8 columnas exactas) ===
+            # === TABLA DE REGISTROS ===
             st.markdown("### 📋 Gestión de Registros")
             
-            h1, h2, h3, h4, h5, h6, h7, h8 = st.columns([1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 0.8])
+            h1, h2, h3, h4, h5, h6, h7, h8 = st.columns([1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2])
             h1.markdown("**Fecha**")
             h2.markdown("**Ventas**")
             h3.markdown("**Costo Rep.**")
@@ -420,14 +518,13 @@ if check_password():
             h5.markdown("**Sueldos**")
             h6.markdown("**Gastos Fijos**") 
             h7.markdown("**Neta**")
-            h8.markdown("**Borrar**")
+            h8.markdown("**Acción**")
             
             st.markdown("---")
 
             for index, row in df_filtrado.iterrows():
-                c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 0.8])
+                c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2])
                 
-                # Ícono de local integrado en la columna de fecha para no desarmar la tabla
                 icono_local = "🏠" if row['Local'] == "Librería Principal" else "🏫"
                 c1.write(f"{row['Fecha'].strftime('%d/%m')} {icono_local}")
                 
@@ -437,16 +534,24 @@ if check_password():
                 c5.write(f"${row['Total_Sueldos']:,.0f}")
                 c6.write(f"${row['Gastos_Fijos']:,.0f}") 
                 
-                # Resaltado en rojo si da pérdida, verde si es ganancia
                 color = "green" if row['Ganancia_Neta'] >= 0 else "red"
                 c7.markdown(f":{color}[**${row['Ganancia_Neta']:,.0f}**]")
                 
-                key_btn = f"del_{row['Fecha'].strftime('%Y%m%d')}_{row['Local']}_{index}"
-                if c8.button("🗑️", key=key_btn):
+                # Botones de Edición y Borrado
+                col_btn1, col_btn2 = c8.columns(2)
+                
+                key_edit = f"edit_{row['Fecha'].strftime('%Y%m%d')}_{row['Local']}_{index}"
+                if col_btn1.button("✏️", key=key_edit):
+                    st.session_state.edit_record = row.to_dict()
+                    st.rerun()
+
+                key_del = f"del_{row['Fecha'].strftime('%Y%m%d')}_{row['Local']}_{index}"
+                if col_btn2.button("🗑️", key=key_del):
                     with st.spinner("Borrando..."):
                         delete_record_by_date_and_local(row['Fecha'], row['Local'])
                     st.success("Borrado.")
                     st.rerun()
 
     else:
+        st.info("👋 La base de datos está vacía. Carga el primer registro a la izquierda.")
         st.info("👋 La base de datos está vacía. Carga el primer registro a la izquierda.")
