@@ -92,13 +92,12 @@ def delete_record_by_date_and_local(fecha_a_borrar, local_a_borrar):
     sheet = get_connection()
     fecha_str = fecha_a_borrar.strftime('%Y-%m-%d')
     
-    # Buscamos la fila que coincida en fecha y local
     data = sheet.get_all_records()
     row_to_delete = None
-    # get_all_records devuelve lista de dicts (fila 2 de sheets = index 0)
+    
     for i, row in enumerate(data):
         if str(row.get('Fecha', '')) == fecha_str and str(row.get('Local', 'Librería Principal')) == local_a_borrar:
-            row_to_delete = i + 2 # +2 porque la fila 1 es encabezado y el index arranca en 0
+            row_to_delete = i + 2
             break
             
     if row_to_delete:
@@ -107,7 +106,6 @@ def delete_record_by_date_and_local(fecha_a_borrar, local_a_borrar):
         st.warning("No se encontró el registro exacto.")
 
 def recalculate_all_history():
-    """Recalcula y adapta la base de datos a la nueva estructura con Locales"""
     sheet = get_connection()
     data = sheet.get_all_records()
     if not data: return
@@ -135,7 +133,6 @@ def recalculate_all_history():
         gastos_fijos = clean_float(row.get('Gastos_Fijos', 0))
         total_sueldos = clean_float(row.get('Total_Sueldos', 0))
         
-        # Obtenemos el local, si no existe o está vacío, asumimos Librería
         local = str(row.get('Local', '')).strip()
         if not local:
             local = "Librería Principal"
@@ -208,7 +205,6 @@ if check_password():
         st.title("📚 LIBRERIA LA PROFE")
         st.markdown("---")
         
-        # Pestañas para cada local
         tab_lib, tab_col = st.tabs(["🏠 Librería", "🏫 Colegio"])
         
         # --- FORMULARIO 1: LIBRERÍA ---
@@ -327,7 +323,6 @@ if check_password():
         # --- FILTROS GLOBALES ---
         st.markdown("### 🔍 Visualización")
         
-        # Filtro nuevo por Local
         filtro_local = st.radio("📍 Seleccionar Local:", ["Ambos Locales", "Librería Principal", "Colegio"], horizontal=True)
         
         filtro_col, periodo_col = st.columns([1, 3])
@@ -373,17 +368,20 @@ if check_password():
         st.divider()
 
         if df_filtrado.empty:
-            st.info(f"No hay datos para: {titulo_periodo} en {filtro_local}")
+            st.info(f"No hay datos para mostrar.")
         else:
-            # === CARTEL PNL VERDE ===
+            # === CARTEL PNL VERDE (Restaurado al diseño original exacto) ===
             pnl_total = df_filtrado['Ganancia_Neta'].sum()
             ventas_total = df_filtrado['Total_Ventas'].sum()
             porc_utilidad = (pnl_total / ventas_total * 100) if ventas_total > 0 else 0
+            
+            titulo_cartel = f"GANANCIA NETA ({titulo_periodo})"
+            if filtro_local != "Ambos Locales":
+                titulo_cartel += f" - {filtro_local.upper()}"
 
             st.markdown(f"""
             <div style="background-color: #d1e7dd; border: 1px solid #198754; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px; max-width: 600px; margin: 0 auto;">
-                <h3 style="color: #0f5132; margin:0; font-size: 18px;">GANANCIA NETA ({titulo_periodo})</h3>
-                <p style="color: #0f5132; margin:0; font-size: 14px;"><i>{filtro_local}</i></p>
+                <h3 style="color: #0f5132; margin:0; font-size: 18px;">{titulo_cartel}</h3>
                 <h1 style="color: #198754; font-size: 45px; margin:0; font-weight: bold;">${pnl_total:,.0f}</h1>
                 <p style="color: #0f5132; margin:0; font-size: 16px; margin-top: 5px;">Utilidad Real: <strong>{porc_utilidad:.1f}%</strong></p>
             </div><br>
@@ -411,42 +409,40 @@ if check_password():
 
             st.divider()
             
-            # === TABLA COMPLETA CON LOCAL ===
+            # === TABLA (Restaurada a 8 columnas exactas) ===
             st.markdown("### 📋 Gestión de Registros")
             
-            # Ajustamos las columnas para incluir 'Local'
-            h1, h2, h3, h4, h5, h6, h7, h8, h9 = st.columns([1, 1.2, 1, 1, 1, 1, 1, 1, 0.7])
+            h1, h2, h3, h4, h5, h6, h7, h8 = st.columns([1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 0.8])
             h1.markdown("**Fecha**")
-            h2.markdown("**Local**")
-            h3.markdown("**Ventas**")
-            h4.markdown("**Costo Rep.**")
-            h5.markdown("**C. Copias**") 
-            h6.markdown("**Sueldos**")
-            h7.markdown("**Gastos Fijos**") 
-            h8.markdown("**Neta**")
-            h9.markdown("**Acción**")
+            h2.markdown("**Ventas**")
+            h3.markdown("**Costo Rep.**")
+            h4.markdown("**C. Copias**") 
+            h5.markdown("**Sueldos**")
+            h6.markdown("**Gastos Fijos**") 
+            h7.markdown("**Neta**")
+            h8.markdown("**Borrar**")
             
             st.markdown("---")
 
             for index, row in df_filtrado.iterrows():
-                c1, c2, c3, c4, c5, c6, c7, c8, c9 = st.columns([1, 1.2, 1, 1, 1, 1, 1, 1, 0.7])
-                c1.write(row['Fecha'].strftime('%d/%m'))
+                c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 0.8])
                 
-                # Formatear el nombre del local para que sea más corto visualmente
-                local_display = "🏠 Librería" if row['Local'] == "Librería Principal" else "🏫 Colegio"
-                c2.write(local_display)
+                # Ícono de local integrado en la columna de fecha para no desarmar la tabla
+                icono_local = "🏠" if row['Local'] == "Librería Principal" else "🏫"
+                c1.write(f"{row['Fecha'].strftime('%d/%m')} {icono_local}")
                 
-                c3.write(f"${row['Total_Ventas']:,.0f}")
-                c4.write(f"${row['Costo_Mercaderia']:,.0f}")
-                c5.write(f"${row['Total_Costo_Copias']:,.0f}")
-                c6.write(f"${row['Total_Sueldos']:,.0f}")
-                c7.write(f"${row['Gastos_Fijos']:,.0f}") 
+                c2.write(f"${row['Total_Ventas']:,.0f}")
+                c3.write(f"${row['Costo_Mercaderia']:,.0f}")
+                c4.write(f"${row['Total_Costo_Copias']:,.0f}")
+                c5.write(f"${row['Total_Sueldos']:,.0f}")
+                c6.write(f"${row['Gastos_Fijos']:,.0f}") 
                 
-                color = "green" if row['Ganancia_Neta'] > 0 else "red"
-                c8.markdown(f":{color}[**${row['Ganancia_Neta']:,.0f}**]")
+                # Resaltado en rojo si da pérdida, verde si es ganancia
+                color = "green" if row['Ganancia_Neta'] >= 0 else "red"
+                c7.markdown(f":{color}[**${row['Ganancia_Neta']:,.0f}**]")
                 
                 key_btn = f"del_{row['Fecha'].strftime('%Y%m%d')}_{row['Local']}_{index}"
-                if c9.button("🗑️", key=key_btn):
+                if c8.button("🗑️", key=key_btn):
                     with st.spinner("Borrando..."):
                         delete_record_by_date_and_local(row['Fecha'], row['Local'])
                     st.success("Borrado.")
